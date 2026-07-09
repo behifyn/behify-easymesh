@@ -38,7 +38,8 @@ echo "Command path: $COMMAND_PATH -> $INSTALL_DIR/easymesh"
 echo
 echo "Run:"
 echo "sudo easymesh"
+echo "sudo easymesh 2.6.4"
 echo
 echo "Strict offline:"
 echo "sudo EASYMESH_OFFLINE=1 easymesh"
-echo "sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh"
+echo "sudo EASYMESH_OFFLINE=1 easymesh 2.6.4"

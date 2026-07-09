@@ -1,13 +1,5 @@
 #!/bin/bash
 
-# Check if the script is run as root
-if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root" 
-   sleep 1
-   exit 1
-fi
-
-
 #color codes
 GREEN="\033[0;32m"
 CYAN="\033[0;36m"
@@ -17,6 +9,62 @@ MAGENTA="\033[0;35m"
 
 DEFAULT_CORE_VERSION="v2.0.3"
 CORE_VERSION="${EASYMESH_CORE_VERSION:-$DEFAULT_CORE_VERSION}"
+
+show_usage() {
+    printf '%s\n' \
+        "Usage:" \
+        "  sudo easymesh" \
+        "  sudo easymesh 2.6.4" \
+        "  sudo easymesh --core v2.6.4" \
+        "" \
+        "Environment:" \
+        "  EASYMESH_OFFLINE=1" \
+        "  EASYMESH_CORE_VERSION=v2.6.4"
+}
+
+normalize_core_version() {
+    local version="$1"
+    if [[ "$version" == v* ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'v%s\n' "$version"
+    fi
+}
+
+is_core_version_arg() {
+    [[ "$1" =~ ^v?[0-9]+(\.[0-9]+){2}$ ]]
+}
+
+if [[ $# -gt 0 ]]; then
+    case "$1" in
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        --core)
+            if [[ -z "$2" || $# -gt 2 ]] || ! is_core_version_arg "$2"; then
+                show_usage
+                exit 1
+            fi
+            CORE_VERSION="$(normalize_core_version "$2")"
+            ;;
+        *)
+            if [[ $# -eq 1 ]] && is_core_version_arg "$1"; then
+                CORE_VERSION="$(normalize_core_version "$1")"
+            else
+                show_usage
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
+# Check if the script is run as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   sleep 1
+   exit 1
+fi
 
 
 # just press key to continue

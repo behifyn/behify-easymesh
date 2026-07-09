@@ -23,16 +23,17 @@ sudo bash install.sh
 sudo easymesh
 ```
 
-حالت آفلاین سخت‌گیرانه با هسته تست‌شده پیش‌فرض:
+استفاده از EasyTier v2.6.4:
+
+```bash
+sudo easymesh 2.6.4
+```
+
+حالت آفلاین سخت‌گیرانه:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
-```
-
-حالت آفلاین سخت‌گیرانه با EasyTier v2.6.4:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
+sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
 تست بسته آفلاین:

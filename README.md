@@ -23,16 +23,17 @@ sudo bash install.sh
 sudo easymesh
 ```
 
-Strict offline with default tested core:
+Use EasyTier v2.6.4:
+
+```bash
+sudo easymesh 2.6.4
+```
+
+Strict offline:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
-```
-
-Strict offline with EasyTier v2.6.4:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
+sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
 Smoke/offline test package:
