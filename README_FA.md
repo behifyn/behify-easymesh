@@ -20,11 +20,6 @@
 
 ```bash
 sudo bash install.sh
-```
-
-نصب آنلاین/با fallback:
-
-```bash
 sudo easymesh
 ```
 
@@ -34,13 +29,7 @@ sudo easymesh
 sudo EASYMESH_OFFLINE=1 easymesh
 ```
 
-حالت آفلاین سخت‌گیرانه با نسخه مشخص هسته:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
-```
-
-تست هسته جدید در آینده:
+حالت آفلاین سخت‌گیرانه با EasyTier v2.6.4:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh

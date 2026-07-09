@@ -20,11 +20,6 @@ Clone or upload this repository to your server, then run:
 
 ```bash
 sudo bash install.sh
-```
-
-Online/fallback install:
-
-```bash
 sudo easymesh
 ```
 
@@ -34,13 +29,7 @@ Strict offline with default tested core:
 sudo EASYMESH_OFFLINE=1 easymesh
 ```
 
-Strict offline with explicit core version:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
-```
-
-Future new core test:
+Strict offline with EasyTier v2.6.4:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
