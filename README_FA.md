@@ -22,6 +22,18 @@
 sudo bash install.sh
 ```
 
+نصب آنلاین/با fallback:
+
+```bash
+sudo bash install.sh
+```
+
+حالت آفلاین سخت‌گیرانه:
+
+```bash
+sudo EASYMESH_OFFLINE=1 easymesh
+```
+
 بعد از نصب:
 ```bash
 sudo easymesh
