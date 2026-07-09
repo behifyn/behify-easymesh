@@ -34,6 +34,14 @@ sudo bash install.sh
 sudo EASYMESH_OFFLINE=1 easymesh
 ```
 
+تست بسته آفلاین:
+
+```bash
+unzip behify-easymesh-test.zip
+cd behify-easymesh-test
+sudo EASYMESH_OFFLINE=1 easymesh
+```
+
 بعد از نصب:
 ```bash
 sudo easymesh
