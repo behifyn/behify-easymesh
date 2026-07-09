@@ -1,0 +1,24 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+.temp/
+*.tmp
+
+# Local test outputs
+dist/
+build/
+
+# Secrets / local env
+.env
+*.key
+*.pem
