@@ -25,13 +25,25 @@ sudo bash install.sh
 نصب آنلاین/با fallback:
 
 ```bash
-sudo bash install.sh
+sudo easymesh
 ```
 
-حالت آفلاین سخت‌گیرانه:
+حالت آفلاین سخت‌گیرانه با هسته تست‌شده پیش‌فرض:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
+```
+
+حالت آفلاین سخت‌گیرانه با نسخه مشخص هسته:
+
+```bash
+sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
+```
+
+تست هسته جدید در آینده:
+
+```bash
+sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
 ```
 
 تست بسته آفلاین:
@@ -51,6 +63,12 @@ sudo easymesh
 فایل‌های هسته EasyTier باید داخل مسیر زیر قرار بگیرند:
 
 core/v2.0.3/
+
+نسخه پیش‌فرض انتخاب‌شده هسته `v2.0.3` است و همین نسخه فعلا smoke-test شده است.
+
+پشتیبانی از `v2.6.4` از طریق `EASYMESH_CORE_VERSION` آماده شده است، اما برای استفاده آفلاین سخت‌گیرانه باید فایل‌های باینری متناظر در مسیر زیر اضافه شوند:
+
+core/v2.6.4/
 
 ## Attribution
 

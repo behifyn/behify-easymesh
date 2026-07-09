@@ -25,13 +25,25 @@ sudo bash install.sh
 Online/fallback install:
 
 ```bash
-sudo bash install.sh
+sudo easymesh
 ```
 
-Offline strict mode:
+Strict offline with default tested core:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
+```
+
+Strict offline with explicit core version:
+
+```bash
+sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
+```
+
+Future new core test:
+
+```bash
+sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
 ```
 
 Smoke/offline test package:
@@ -52,6 +64,12 @@ Offline Core
 The project is intended to include EasyTier core binaries locally under:
 
 core/v2.0.3/
+
+The default selected core is `v2.0.3`, which is the currently smoke-tested version.
+
+Support for `v2.6.4` is prepared through `EASYMESH_CORE_VERSION`, but strict offline use requires adding matching local binaries under:
+
+core/v2.6.4/
 
 Future versions may include newer EasyTier core builds while keeping older versions as fallback.
 

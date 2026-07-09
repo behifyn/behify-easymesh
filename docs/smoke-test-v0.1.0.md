@@ -13,6 +13,10 @@ easytier-core 2.0.3-861d6584
 easytier-cli 2.0.3-861d6584
 ```
 
+`v2.0.3` is the currently smoke-tested default core version.
+
+`v2.6.4` support is prepared through `EASYMESH_CORE_VERSION`, but strict offline testing requires adding matching local binaries under `core/v2.6.4/`.
+
 ## Server 1
 
 ```text
