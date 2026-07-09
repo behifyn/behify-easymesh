@@ -22,6 +22,18 @@ Clone or upload this repository to your server, then run:
 sudo bash install.sh
 ```
 
+Online/fallback install:
+
+```bash
+sudo bash install.sh
+```
+
+Offline strict mode:
+
+```bash
+sudo EASYMESH_OFFLINE=1 easymesh
+```
+
 After installation:
 ```bash
 sudo easymesh
