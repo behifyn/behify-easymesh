@@ -784,18 +784,21 @@ remove_easymesh_core(){
 # Function to display menu
 display_menu() {
     clear
-# Print the header with colors
-printf "   ${CYAN}╔════════════════════════════════════════╗\n"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Behify EasyMesh"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "VPN Network Solution"
-printf "   ╠════════════════════════════════════════╣\n"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Default Core: $DEFAULT_CORE_VERSION"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Selected Core: $CORE_VERSION"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Telegram: @behify1"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Channel: BehifyVPN"
-printf "   ║  ${WHITE}%-34s${CYAN}║\n" "Build: Behify private"
-printf "   ╚════════════════════════════════════════╝${RESET}\n"
-check_core_status
+    print_box_line() {
+        printf "   | %-36s |\n" "$1"
+    }
+
+    printf "   +--------------------------------------+\n"
+    print_box_line "Behify EasyMesh"
+    print_box_line "VPN Network Solution"
+    printf "   +--------------------------------------+\n"
+    print_box_line "Default Core: $DEFAULT_CORE_VERSION"
+    print_box_line "Selected Core: $CORE_VERSION"
+    print_box_line "Telegram: @behify1"
+    print_box_line "Channel: BehifyVPN"
+    print_box_line "Build: Behify private"
+    printf "   +--------------------------------------+\n"
+    check_core_status
 
     echo ''
     colorize green "	[1] Connect to the Mesh Network" bold 
