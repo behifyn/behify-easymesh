@@ -31,3 +31,7 @@ sudo easymesh
 فایل‌های هسته EasyTier باید داخل مسیر زیر قرار بگیرند:
 
 core/v2.0.3/
+
+## Attribution
+
+Based on Easy-Mesh by Musixal. LICENSE and NOTICE retained.

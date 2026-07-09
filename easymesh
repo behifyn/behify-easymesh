@@ -86,7 +86,7 @@ install_easytier() {
     if [ -d "$DEST_DIR" ]; then    
         # Check if the files exist
         if [ -f "$DEST_DIR/$FILE1" ] && [ -f "$DEST_DIR/$FILE2" ]; then
-            colorize green "EasyMesh Core Installed" bold
+            colorize green "Behify EasyMesh Core Installed" bold
             return 0
         fi
     fi
@@ -108,7 +108,7 @@ install_easytier() {
 
 
     mkdir -p $DEST_DIR &> /dev/null
-    colorize yellow "Downloading EasyMesh Core...\n"
+    colorize yellow "Downloading Behify EasyMesh Core...\n"
     curl -Ls "$URL/easytier-cli" -o "$DEST_DIR/easytier-cli"
     curl -Ls "$URL/easytier-core" -o "$DEST_DIR/easytier-core"
 
@@ -116,11 +116,11 @@ install_easytier() {
     if [ -f "$DEST_DIR/$FILE1" ] && [ -f "$DEST_DIR/$FILE2" ]; then
     	chmod +x "$DEST_DIR/easytier-cli"
     	chmod +x "$DEST_DIR/easytier-core"
-        colorize green "EasyMesh Core Installed Successfully...\n" bold
+        colorize green "Behify EasyMesh Core Installed Successfully...\n" bold
         sleep 1
         return 0
     else
-        colorize red "Failed to install EasyMesh Core...\n" bold
+        colorize red "Failed to install Behify EasyMesh Core...\n" bold
         exit 1
     fi
 }
@@ -287,7 +287,7 @@ EOF
     sudo systemctl enable easymesh.service &> /dev/null
     sudo systemctl start easymesh.service &> /dev/null
 
-    colorize green "EasyMesh Network Service Started.\n" bold
+    colorize green "Behify EasyMesh Network Service Started.\n" bold
 	press_key
 }
 
@@ -309,16 +309,16 @@ peer_center(){
 restart_easymesh_service() {
 	echo ''
 	if [[ ! -f $SERVICE_FILE ]]; then
-		colorize red "	EasyMesh service does not exists." bold
+		colorize red "	Behify EasyMesh service does not exists." bold
 		sleep 1
 		return 1
 	fi
-    colorize yellow "	Restarting EasyMesh service...\n" bold
+    colorize yellow "	Restarting Behify EasyMesh service...\n" bold
     sudo systemctl restart easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
-        colorize green "	EasyMesh service restarted successfully." bold
+        colorize green "	Behify EasyMesh service restarted successfully." bold
     else
-        colorize red "	Failed to restart EasyMesh service." bold
+        colorize red "	Failed to restart Behify EasyMesh service." bold
     fi
     echo ''
 	 read -p "	Press Enter to continue..."
@@ -327,36 +327,36 @@ restart_easymesh_service() {
 remove_easymesh_service() {
 	echo
 	if [[ ! -f $SERVICE_FILE ]]; then
-		 colorize red "	EasyMesh service does not exists." bold
+		 colorize red "	Behify EasyMesh service does not exists." bold
 		 sleep 1
 		 return 1
 	fi
-    colorize yellow "	Stopping EasyMesh service..." bold
+    colorize yellow "	Stopping Behify EasyMesh service..." bold
     sudo systemctl stop easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
-        colorize green "	EasyMesh service stopped successfully.\n"
+        colorize green "	Behify EasyMesh service stopped successfully.\n"
     else
-        colorize red "	Failed to stop EasyMesh service.\n"
+        colorize red "	Failed to stop Behify EasyMesh service.\n"
         sleep 2
         return 1
     fi
 
-    colorize yellow "	Disabling EasyMesh service..." bold
+    colorize yellow "	Disabling Behify EasyMesh service..." bold
     sudo systemctl disable easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
-        colorize green "	EasyMesh service disabled successfully.\n"
+        colorize green "	Behify EasyMesh service disabled successfully.\n"
     else
-        colorize red "	Failed to disable EasyMesh service.\n"
+        colorize red "	Failed to disable Behify EasyMesh service.\n"
         sleep 2
         return 1
     fi
 
-    colorize yellow "	Removing EasyMesh service..." bold
+    colorize yellow "	Removing Behify EasyMesh service..." bold
     sudo rm /etc/systemd/system/easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
-        colorize green "	EasyMesh service removed successfully.\n"
+        colorize green "	Behify EasyMesh service removed successfully.\n"
     else
-        colorize red "	Failed to remove EasyMesh service.\n"
+        colorize red "	Failed to remove Behify EasyMesh service.\n"
         sleep 2
         return 1
     fi
@@ -385,7 +385,7 @@ show_network_secret() {
             colorize red "	Network Secret key not found" bold
         fi
     else
-        colorize red "	EasyMesh service does not exists." bold
+        colorize red "	Behify EasyMesh service does not exists." bold
     fi
     echo ''
     read -p "	Press Enter to continue..."
@@ -395,7 +395,7 @@ show_network_secret() {
 
 view_service_status() {
 	if [[ ! -f $SERVICE_FILE ]]; then
-		 colorize red "	EasyMesh service does not exists." bold
+		 colorize red "	Behify EasyMesh service does not exists." bold
 		 sleep 1
 		 return 1
 	fi
@@ -693,10 +693,10 @@ check_core_status(){
     FILE2="easytier-cli"
     
         if [ -f "$DEST_DIR/$FILE1" ] && [ -f "$DEST_DIR/$FILE2" ]; then
-        colorize green "EasyMesh Core Installed" bold
+        colorize green "Behify EasyMesh Core Installed" bold
         return 0
     else
-        colorize red "EasyMesh Core not found" bold
+        colorize red "Behify EasyMesh Core not found" bold
         return 1
     fi
 }
@@ -706,7 +706,7 @@ remove_easymesh_core(){
 	echo
 	
 	if [[ ! -d '/root/easytier' ]]; then
-		 colorize red "	EasyMesh directory not found." bold
+		 colorize red "	Behify EasyMesh directory not found." bold
 		 sleep 2
 		 return 1
 	fi
@@ -714,7 +714,7 @@ remove_easymesh_core(){
 	
 	rm -rf /root/easytier &> /dev/null
 	
-	colorize green "	Easymesh core deleted successfully." bold
+	colorize green "	Behify EasyMesh core deleted successfully." bold
 	sleep 2
 
 }
@@ -723,14 +723,14 @@ display_menu() {
     clear
 # Print the header with colors
 echo -e "   ${CYAN}╔════════════════════════════════════════╗"
-echo -e "   ║            🌐 ${WHITE}EasyMesh                 ${CYAN}║"
+echo -e "   ║        🌐 ${WHITE}Behify EasyMesh              ${CYAN}║"
 echo -e "   ║        ${WHITE}VPN Network Solution            ${CYAN}║"
 echo -e "   ╠════════════════════════════════════════╣"
 echo -e "   ║  ${WHITE}Core Version: 2.03                    ${CYAN}║"
-echo -e "   ║  ${WHITE}Telegram Channel: @Gozar_Xray         ${CYAN}║"
-echo -e "   ║  ${WHITE}GitHub: github.com/Musixal/easy-mesh  ${CYAN}║"
+echo -e "   ║  ${WHITE}Telegram: @behify1 / Channel: BehifyVPN${CYAN}║"
+echo -e "   ║  ${WHITE}Build: Private Behify build           ${CYAN}║"
 echo -e "   ╠════════════════════════════════════════╣${RESET}"
-echo -e "   ║        $(check_core_status)         ║"
+echo -e "   ║  $(check_core_status)        ║"
 echo -e "   ╚════════════════════════════════════════╝"
 
     echo ''

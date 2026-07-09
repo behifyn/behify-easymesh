@@ -37,9 +37,7 @@ Future versions may include newer EasyTier core builds while keeping older versi
 
 Attribution
 
-This project is based on Easy-Mesh by Musixal and uses EasyTier core.
-
-The original LICENSE and NOTICE files are retained.
+Based on Easy-Mesh by Musixal. LICENSE and NOTICE retained.
 
 
 ---
