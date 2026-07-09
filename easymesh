@@ -339,18 +339,30 @@ EOF
 }
 
 
+is_mesh_cli_ready() {
+    if [[ ! -f $SERVICE_FILE ]] || ! systemctl is-active --quiet easymesh.service || [[ ! -x $EASY_CLIENT ]]; then
+        colorize yellow "EasyMesh service is not running yet. Please connect to a mesh network first." bold
+        press_key
+        return 1
+    fi
+    return 0
+}
+
 display_peers()
-{	
-	watch -n1 $EASY_CLIENT peer	
+{
+    is_mesh_cli_ready || return 1
+	watch -n1 "$EASY_CLIENT" peer
 }
 display_routes(){
 
-	watch -n1 $EASY_CLIENT route	
+    is_mesh_cli_ready || return 1
+	watch -n1 "$EASY_CLIENT" route
 }
 
 peer_center(){
 
-	watch -n1 $EASY_CLIENT peer-center	
+    is_mesh_cli_ready || return 1
+	watch -n1 "$EASY_CLIENT" peer-center
 }
 
 restart_easymesh_service() {
@@ -774,7 +786,8 @@ echo -e "   ║        🌐 ${WHITE}Behify EasyMesh              ${CYAN}║"
 echo -e "   ║        ${WHITE}VPN Network Solution            ${CYAN}║"
 echo -e "   ╠════════════════════════════════════════╣"
 echo -e "   ║  ${WHITE}Core Version: 2.03                    ${CYAN}║"
-echo -e "   ║  ${WHITE}Telegram: @behify1 / Channel: BehifyVPN${CYAN}║"
+echo -e "   ║  ${WHITE}Telegram: @behify1                  ${CYAN}║"
+echo -e "   ║  ${WHITE}Channel: BehifyVPN                  ${CYAN}║"
 echo -e "   ║  ${WHITE}Build: Private Behify build           ${CYAN}║"
 echo -e "   ╠════════════════════════════════════════╣${RESET}"
 echo -e "   ║  $(check_core_status)        ║"
@@ -788,7 +801,7 @@ echo -e "   ╚═════════════════════�
     colorize reset "	[5] Display Secret Key"
     colorize reset "	[6] View Service Status"  
     colorize reset "	[7] Set Watchdog [Auto-Restarter]"
-    colorize reset "	[8] Cron-jon setting"   
+    colorize reset "	[8] Cron-job setting"
     colorize yellow "	[9] Restart Service" 
     colorize red "	[10] Remove Service" 
     colorize magenta "	[11] Remove Core" 

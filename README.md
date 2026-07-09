@@ -34,6 +34,14 @@ Offline strict mode:
 sudo EASYMESH_OFFLINE=1 easymesh
 ```
 
+Smoke/offline test package:
+
+```bash
+unzip behify-easymesh-test.zip
+cd behify-easymesh-test
+sudo EASYMESH_OFFLINE=1 easymesh
+```
+
 After installation:
 ```bash
 sudo easymesh

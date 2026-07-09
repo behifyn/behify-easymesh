@@ -47,6 +47,11 @@ Latency: ~28-29 ms
 ## Validation Commands
 
 ```bash
+unzip behify-easymesh-test.zip
+cd behify-easymesh-test
+```
+
+```bash
 systemctl status easymesh.service --no-pager
 /root/easytier/easytier-cli peer
 /root/easytier/easytier-cli route
@@ -58,7 +63,4 @@ ping -c 4 10.144.144.2
 
 The offline-first installation successfully installed EasyTier core binaries from the local package.
 
-Known minor UI issues:
-
-- The banner Telegram/channel line may overflow the ASCII box.
-- CLI peer/route commands should show a friendly message when the service is not running.
+The banner contact lines fit inside the menu box, and peer/route views show a friendly message when the service is not running.
