@@ -23,7 +23,11 @@ show_usage() {
         "" \
         "Notes:" \
         "  Default core remains v2.0.3." \
-        "  v2.6.4 can be selected explicitly for testing."
+        "  v2.6.4 can be selected explicitly for testing." \
+        "" \
+        "Runtime checks:" \
+        "  /root/easytier/easytier-core --version" \
+        "  PID=\$(systemctl show -p MainPID --value easymesh.service); sudo /proc/\$PID/exe --version"
 }
 
 normalize_core_version() {
@@ -412,7 +416,9 @@ display_peers()
 display_routes(){
 
     is_mesh_cli_ready || return 1
-	watch -n1 "$EASY_CLIENT" route
+    colorize yellow "Route output is wide. Use a wide terminal or less -S for best view." bold
+    sleep 2
+	watch -n1 "COLUMNS=220 \"$EASY_CLIENT\" route"
 }
 
 peer_center(){
@@ -816,6 +822,64 @@ check_core_status(){
     fi
 }
 
+get_installed_core_version() {
+    local core_path="/root/easytier/easytier-core"
+    local version
+
+    if [[ ! -x "$core_path" ]]; then
+        printf 'not installed\n'
+        return 0
+    fi
+
+    version=$("$core_path" --version 2>/dev/null | head -n 1)
+    if [[ -n "$version" ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+get_service_status() {
+    if [[ ! -f "$SERVICE_FILE" ]]; then
+        printf 'missing\n'
+    elif systemctl is-active --quiet easymesh.service; then
+        printf 'active\n'
+    else
+        printf 'inactive\n'
+    fi
+}
+
+get_running_core_version() {
+    local pid
+    local version
+
+    if [[ "$(get_service_status)" != "active" ]]; then
+        printf 'not running\n'
+        return 0
+    fi
+
+    pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null)
+    if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ "$pid" == "0" ]] || [[ ! -x "/proc/$pid/exe" ]]; then
+        printf 'not running\n'
+        return 0
+    fi
+
+    version=$("/proc/$pid/exe" --version 2>/dev/null | head -n 1)
+    if [[ -n "$version" ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+show_runtime_status() {
+    colorize cyan "Core status:" bold
+    check_core_status
+    colorize cyan "Installed Core: $(get_installed_core_version)" bold
+    colorize cyan "Running Core: $(get_running_core_version)" bold
+    colorize cyan "Service Status: $(get_service_status)" bold
+}
+
 # New function to remove core
 remove_easymesh_core(){
 	echo
@@ -851,8 +915,7 @@ display_menu() {
     print_box_line "Channel: BehifyVPN"
     print_box_line "Build: Behify private"
     printf "   +--------------------------------------+\n"
-    colorize cyan "Core status:" bold
-    check_core_status
+    show_runtime_status
 
     echo ''
     colorize cyan "Menu options:" bold

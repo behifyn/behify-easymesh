@@ -37,6 +37,13 @@ sudo EASYMESH_OFFLINE=1 easymesh
 sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
+بررسی نسخه هسته نصب‌شده/در حال اجرا:
+
+```bash
+/root/easytier/easytier-core --version
+PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
+```
+
 تست بسته آفلاین:
 
 ```bash

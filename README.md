@@ -37,6 +37,13 @@ sudo EASYMESH_OFFLINE=1 easymesh
 sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
+Check installed/running core version:
+
+```bash
+/root/easytier/easytier-core --version
+PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
+```
+
 Smoke/offline test package:
 
 ```bash
