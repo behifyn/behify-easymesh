@@ -27,6 +27,7 @@ sudo easymesh
 
 ```bash
 sudo easymesh 2.6.4
+sudo easymesh --core v2.6.4
 ```
 
 حالت آفلاین سخت‌گیرانه:
@@ -59,6 +60,15 @@ core/v2.0.3/
 پشتیبانی از `v2.6.4` از طریق `EASYMESH_CORE_VERSION` آماده شده است، اما برای استفاده آفلاین سخت‌گیرانه باید فایل‌های باینری متناظر در مسیر زیر اضافه شوند:
 
 core/v2.6.4/
+
+گزینه‌های پیشرفته زیر فقط برای تست پایداری آینده مستند شده‌اند و به صورت پیش‌فرض فعال نیستند:
+
+```text
+--enable-kcp-proxy
+--enable-quic-proxy
+--compression zstd
+--multi-thread
+```
 
 ## Attribution
 

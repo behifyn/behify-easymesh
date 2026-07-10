@@ -27,6 +27,7 @@ Use EasyTier v2.6.4:
 
 ```bash
 sudo easymesh 2.6.4
+sudo easymesh --core v2.6.4
 ```
 
 Strict offline:
@@ -62,6 +63,15 @@ Support for `v2.6.4` is prepared through `EASYMESH_CORE_VERSION`, but strict off
 core/v2.6.4/
 
 Future versions may include newer EasyTier core builds while keeping older versions as fallback.
+
+Future stability test candidates are documented only and are not enabled by default:
+
+```text
+--enable-kcp-proxy
+--enable-quic-proxy
+--compression zstd
+--multi-thread
+```
 
 Attribution
 

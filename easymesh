@@ -19,7 +19,11 @@ show_usage() {
         "" \
         "Environment:" \
         "  EASYMESH_OFFLINE=1" \
-        "  EASYMESH_CORE_VERSION=v2.6.4"
+        "  EASYMESH_CORE_VERSION=v2.6.4" \
+        "" \
+        "Notes:" \
+        "  Default core remains v2.0.3." \
+        "  v2.6.4 can be selected explicitly for testing."
 }
 
 normalize_core_version() {
@@ -836,6 +840,7 @@ display_menu() {
         printf "   | %-36s |\n" "$1"
     }
 
+    colorize cyan "Behify EasyMesh" bold
     printf "   +--------------------------------------+\n"
     print_box_line "Behify EasyMesh"
     print_box_line "VPN Network Solution"
@@ -846,9 +851,11 @@ display_menu() {
     print_box_line "Channel: BehifyVPN"
     print_box_line "Build: Behify private"
     printf "   +--------------------------------------+\n"
+    colorize cyan "Core status:" bold
     check_core_status
 
     echo ''
+    colorize cyan "Menu options:" bold
     colorize green "	[1] Connect to the Mesh Network" bold 
     colorize yellow "	[2] Display Peers" 
     colorize cyan "	[3] Display Routes" 
