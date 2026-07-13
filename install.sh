@@ -4,6 +4,7 @@ set -e
 
 APP_NAME="easymesh"
 SOURCE_FILE="./easymesh"
+RELAY_MANAGER_FILE="./relay-manager"
 INSTALL_DIR="/opt/behify-easymesh"
 COMMAND_PATH="/usr/local/bin/easymesh"
 
@@ -13,8 +14,8 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if [[ ! -f "$SOURCE_FILE" ]]; then
-  echo "Error: $SOURCE_FILE not found."
+if [[ ! -f "$SOURCE_FILE" || ! -f "$RELAY_MANAGER_FILE" ]]; then
+  echo "Error: $SOURCE_FILE or $RELAY_MANAGER_FILE not found."
   exit 1
 fi
 
@@ -22,6 +23,9 @@ install -d "$INSTALL_DIR"
 cp "$SOURCE_FILE" "$INSTALL_DIR/easymesh"
 cp -a core "$INSTALL_DIR/"
 cp README.md README_FA.md LICENSE NOTICE "$INSTALL_DIR/"
+
+install -d "$INSTALL_DIR/relay"
+install -m 0755 "$RELAY_MANAGER_FILE" "$INSTALL_DIR/relay/relay-manager"
 
 if [[ -d docs ]]; then
   cp -a docs "$INSTALL_DIR/"

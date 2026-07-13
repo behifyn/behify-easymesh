@@ -48,6 +48,34 @@ Existing ARMv7 package selection remains supported where matching local binaries
 
 Running `sudo easymesh 2.6.4` when another core version is installed offers a core-only upgrade. Both candidate binaries are copied to temporary files and executed for architecture and version validation before the current service is stopped. After confirmation, the script backs up and replaces only `easytier-core` and `easytier-cli`; the existing `easymesh.service` file, its `ExecStart`, and the mesh configuration are preserved. A failed installation or service restart automatically restores the backup.
 
+## Relay / Port Routing
+
+Menu option `[12] Relay / Port Routing` provides an optional Dokodemo-Door relay. The end user does not need 3x-ui, Hiddify Manager, or an existing Xray installation. Behify downloads and runs a dedicated Xray binary that is isolated from any panel-managed Xray already installed on the server.
+
+Relay modes are `tcp`, `udp`, and `both`. For example, a UDP relay can listen on public port `443` and forward it to EasyTier mesh address `10.144.144.1` port `443`:
+
+```text
+Name: mesh-udp-443
+Protocol: udp
+Listen address: 0.0.0.0
+Listen port: 443
+Destination IP: 10.144.144.1
+Destination port: 443
+```
+
+Dedicated relay paths:
+
+```text
+/opt/behify-easymesh/relay/xray/current/xray
+/etc/behify-easymesh/relay/relays.json
+/etc/behify-easymesh/relay/config.json
+/etc/systemd/system/behify-relay.service
+```
+
+TCP and UDP conflicts are checked separately with `ss`. Sensitive ports such as SSH port `22` produce an additional confirmation warning. EasyTier route checks are advisory: a route warning does not overwrite or remove the existing relay configuration.
+
+Every configuration change backs up the current relay files, generates and validates temporary JSON, tests it with the dedicated Xray binary, and then atomically installs it. Only `behify-relay.service` is restarted. If validation, installation, or service startup fails, the previous relay configuration is restored automatically. The relay service uses `Wants=easymesh.service`; it does not contain or modify mesh IP, secret, peer, or `ExecStart` configuration.
+
 Check installed/running core version:
 
 ```bash

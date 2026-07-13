@@ -1147,6 +1147,25 @@ remove_easymesh_core(){
 	sleep 2
 
 }
+
+relay_port_routing() {
+    local script_dir relay_manager
+
+    script_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+    relay_manager="$script_dir/relay/relay-manager"
+    if [[ ! -f "$relay_manager" ]]; then
+        relay_manager="$script_dir/relay-manager"
+    fi
+
+    if [[ ! -f "$relay_manager" ]]; then
+        colorize red "Relay manager is not installed. Run sudo bash install.sh again." bold
+        press_key
+        return 1
+    fi
+
+    bash "$relay_manager"
+}
+
 # Function to display menu
 display_menu() {
     clear
@@ -1180,6 +1199,7 @@ display_menu() {
     colorize yellow "	[9] Restart Service" 
     colorize red "	[10] Remove Service" 
     colorize magenta "	[11] Remove Core" 
+    colorize cyan "	[12] Relay / Port Routing"
     
     echo -e "	[0] Exit" 
     echo ''
@@ -1203,6 +1223,7 @@ read_option() {
         9) restart_easymesh_service ;;
         10) remove_easymesh_service ;;
         11) remove_easymesh_core ;;
+        12) relay_port_routing ;;
         0) exit 0 ;;
         *) colorize red "	Invalid option!" bold && sleep 1 ;;
     esac
