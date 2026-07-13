@@ -37,6 +37,17 @@ sudo EASYMESH_OFFLINE=1 easymesh
 sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
+## Architecture-safe core selection
+
+Local core packages are selected from the detected system architecture:
+
+- `x86_64` or `amd64`: `easytier-linux-x86_64`
+- `aarch64` or `arm64`: `easytier-linux-aarch64`
+
+Existing ARMv7 package selection remains supported where matching local binaries are present. Unknown architectures stop safely and are never redirected to an x86_64 package.
+
+Running `sudo easymesh 2.6.4` when another core version is installed offers a core-only upgrade. Both candidate binaries are copied to temporary files and executed for architecture and version validation before the current service is stopped. After confirmation, the script backs up and replaces only `easytier-core` and `easytier-cli`; the existing `easymesh.service` file, its `ExecStart`, and the mesh configuration are preserved. A failed installation or service restart automatically restores the backup.
+
 Check installed/running core version:
 
 ```bash
@@ -65,7 +76,7 @@ core/v2.0.3/
 
 The default selected core is `v2.0.3`, which is the currently smoke-tested version.
 
-Support for `v2.6.4` is prepared through `EASYMESH_CORE_VERSION`, but strict offline use requires adding matching local binaries under:
+Local `v2.6.4` packages for x86_64 and aarch64 are stored under:
 
 core/v2.6.4/
 
