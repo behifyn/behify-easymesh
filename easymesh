@@ -1,13 +1,5 @@
 #!/bin/bash
 
-# Check if the script is run as root
-if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root" 
-   sleep 1
-   exit 1
-fi
-
-
 #color codes
 GREEN="\033[0;32m"
 CYAN="\033[0;36m"
@@ -17,6 +9,73 @@ MAGENTA="\033[0;35m"
 
 DEFAULT_CORE_VERSION="v2.0.3"
 CORE_VERSION="${EASYMESH_CORE_VERSION:-$DEFAULT_CORE_VERSION}"
+CORE_VERSION_EXPLICIT=0
+
+show_usage() {
+    printf '%s\n' \
+        "Usage:" \
+        "  sudo easymesh" \
+        "  sudo easymesh 2.6.4" \
+        "  sudo easymesh --core v2.6.4" \
+        "" \
+        "Environment:" \
+        "  EASYMESH_OFFLINE=1" \
+        "  EASYMESH_CORE_VERSION=v2.6.4" \
+        "" \
+        "Notes:" \
+        "  Default core remains v2.0.3." \
+        "  v2.6.4 can be selected explicitly for testing." \
+        "" \
+        "Runtime checks:" \
+        "  /root/easytier/easytier-core --version" \
+        "  PID=\$(systemctl show -p MainPID --value easymesh.service); sudo /proc/\$PID/exe --version"
+}
+
+normalize_core_version() {
+    local version="$1"
+    if [[ "$version" == v* ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'v%s\n' "$version"
+    fi
+}
+
+is_core_version_arg() {
+    [[ "$1" =~ ^v?[0-9]+(\.[0-9]+){2}$ ]]
+}
+
+if [[ $# -gt 0 ]]; then
+    case "$1" in
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        --core)
+            if [[ -z "$2" || $# -gt 2 ]] || ! is_core_version_arg "$2"; then
+                show_usage
+                exit 1
+            fi
+            CORE_VERSION="$(normalize_core_version "$2")"
+            CORE_VERSION_EXPLICIT=1
+            ;;
+        *)
+            if [[ $# -eq 1 ]] && is_core_version_arg "$1"; then
+                CORE_VERSION="$(normalize_core_version "$1")"
+                CORE_VERSION_EXPLICIT=1
+            else
+                show_usage
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
+# Check if the script is run as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   sleep 1
+   exit 1
+fi
 
 
 # just press key to continue
@@ -77,12 +136,254 @@ is_arm_hard_float() {
         [ -e /lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 ]
 }
 
+resolve_core_arch_directory() {
+    local arch="${1:-$(uname -m)}"
+
+    case "$arch" in
+        x86_64|amd64)
+            printf 'easytier-linux-x86_64\n'
+            ;;
+        aarch64|arm64)
+            printf 'easytier-linux-aarch64\n'
+            ;;
+        armv7l)
+            if is_arm_hard_float; then
+                printf 'easytier-linux-armv7hf\n'
+            else
+                printf 'easytier-linux-armv7\n'
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+get_binary_version_number() {
+    local binary="$1"
+
+    [[ -x "$binary" ]] || return 1
+    "$binary" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
+}
+
+validate_local_core_candidate() {
+    local candidate_dir="$1"
+    local system_arch="$2"
+    local temp_dir temp_core temp_cli core_output cli_output core_version cli_version
+    local selected_number="${CORE_VERSION#v}"
+
+    if [[ ! -f "$candidate_dir/easytier-core" || ! -f "$candidate_dir/easytier-cli" ]]; then
+        return 1
+    fi
+
+    temp_dir=$(mktemp -d) || return 1
+    temp_core="$temp_dir/easytier-core"
+    temp_cli="$temp_dir/easytier-cli"
+
+    if ! cp "$candidate_dir/easytier-core" "$temp_core" || \
+       ! cp "$candidate_dir/easytier-cli" "$temp_cli" || \
+       ! chmod +x "$temp_core" "$temp_cli"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    core_output=$("$temp_core" --version 2>&1)
+    if [[ $? -ne 0 ]]; then
+        colorize red "Local EasyTier core candidate cannot execute." bold
+        colorize red "Detected architecture: $system_arch" bold
+        colorize red "Selected package: $candidate_dir" bold
+        colorize red "$core_output" bold
+        rm -rf "$temp_dir"
+        return 2
+    fi
+
+    cli_output=$("$temp_cli" --version 2>&1)
+    if [[ $? -ne 0 ]]; then
+        colorize red "Local EasyTier CLI candidate cannot execute." bold
+        colorize red "Detected architecture: $system_arch" bold
+        colorize red "Selected package: $candidate_dir" bold
+        colorize red "$cli_output" bold
+        rm -rf "$temp_dir"
+        return 2
+    fi
+
+    core_version=$(printf '%s\n' "$core_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    cli_version=$(printf '%s\n' "$cli_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    if [[ "$core_version" != "$selected_number" || "$cli_version" != "$selected_number" ]]; then
+        colorize red "Local core package version does not match selected core $CORE_VERSION." bold
+        colorize red "Detected architecture: $system_arch" bold
+        colorize red "Selected package: $candidate_dir" bold
+        colorize red "Candidate versions: core=${core_version:-unknown}, cli=${cli_version:-unknown}" bold
+        rm -rf "$temp_dir"
+        return 2
+    fi
+
+    VALIDATED_CORE="$temp_core"
+    VALIDATED_CLI="$temp_cli"
+    VALIDATED_TEMP_DIR="$temp_dir"
+    return 0
+}
+
+install_validated_core_files() {
+    local dest_dir="$1"
+    local staged_core="$dest_dir/.easytier-core.new.$$"
+    local staged_cli="$dest_dir/.easytier-cli.new.$$"
+
+    mkdir -p "$dest_dir" || return 1
+    install -m 0755 "$VALIDATED_CORE" "$staged_core" || return 1
+    install -m 0755 "$VALIDATED_CLI" "$staged_cli" || {
+        rm -f "$staged_core"
+        return 1
+    }
+    if ! mv -f "$staged_core" "$dest_dir/easytier-core"; then
+        rm -f "$staged_core" "$staged_cli"
+        return 1
+    fi
+    if ! mv -f "$staged_cli" "$dest_dir/easytier-cli"; then
+        rm -f "$staged_cli"
+        return 1
+    fi
+}
+
+restore_core_backup() {
+    local backup_dir="$1"
+    local service_file="$2"
+    local service_was_active="$3"
+    local restore_core="/root/easytier/.easytier-core.rollback.$$"
+    local restore_cli="/root/easytier/.easytier-cli.rollback.$$"
+
+    systemctl stop easymesh.service &>/dev/null || true
+
+    if install -m 0755 "$backup_dir/easytier-core" "$restore_core" && \
+       install -m 0755 "$backup_dir/easytier-cli" "$restore_cli" && \
+       mv -f "$restore_core" /root/easytier/easytier-core && \
+       mv -f "$restore_cli" /root/easytier/easytier-cli; then
+        if [[ "$service_was_active" == "1" && -f "$service_file" ]]; then
+            if systemctl start easymesh.service; then
+                colorize green "Rollback completed and the previous service was restarted." bold
+            else
+                colorize red "Binaries were restored, but the previous service could not be restarted." bold
+            fi
+        else
+            colorize green "Rollback completed. Previous core binaries were restored." bold
+        fi
+        return 0
+    fi
+
+    rm -f "$restore_core" "$restore_cli"
+    colorize red "Automatic rollback failed. Backup retained at: $backup_dir" bold
+    return 1
+}
+
+upgrade_installed_core() {
+    local candidate_dir="$1"
+    local system_arch="$2"
+    local dest_dir="/root/easytier"
+    local service_file="/etc/systemd/system/easymesh.service"
+    local selected_number="${CORE_VERSION#v}"
+    local installed_core installed_cli backup_dir service_was_active=0 pid running_version
+
+    installed_core=$(get_binary_version_number "$dest_dir/easytier-core" || true)
+    installed_cli=$(get_binary_version_number "$dest_dir/easytier-cli" || true)
+
+    if [[ "$installed_core" == "$selected_number" && "$installed_cli" == "$selected_number" ]]; then
+        colorize green "Selected EasyMesh Core is already installed ($CORE_VERSION)." bold
+        return 0
+    fi
+
+    colorize yellow "Installed Core: ${installed_core:-unknown}" bold
+    colorize yellow "Selected Core: $CORE_VERSION" bold
+    colorize yellow "Detected architecture: $system_arch" bold
+    read -r -p "Upgrade the installed core to $CORE_VERSION? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        colorize yellow "Core upgrade cancelled. Existing installation was not changed." bold
+        return 0
+    fi
+
+    validate_local_core_candidate "$candidate_dir" "$system_arch"
+    case $? in
+        0) ;;
+        1)
+            colorize red "Local core package is incomplete: $candidate_dir" bold
+            return 1
+            ;;
+        *) return 1 ;;
+    esac
+
+    if [[ ! -f "$dest_dir/easytier-core" || ! -f "$dest_dir/easytier-cli" ]]; then
+        colorize red "Safe upgrade requires both installed binaries so they can be backed up." bold
+        rm -rf "$VALIDATED_TEMP_DIR"
+        return 1
+    fi
+
+    backup_dir="/root/easymesh-core-backup-$(date +%Y%m%d-%H%M%S)"
+    if [[ -e "$backup_dir" ]] || ! mkdir "$backup_dir" || \
+       ! cp "$dest_dir/easytier-core" "$backup_dir/easytier-core" || \
+       ! cp "$dest_dir/easytier-cli" "$backup_dir/easytier-cli"; then
+        colorize red "Could not create a complete core backup. Upgrade aborted." bold
+        rm -rf "$VALIDATED_TEMP_DIR"
+        return 1
+    fi
+
+    if [[ -f "$service_file" ]] && systemctl is-active --quiet easymesh.service; then
+        service_was_active=1
+    fi
+
+    if [[ "$service_was_active" == "1" ]] && ! systemctl stop easymesh.service; then
+        colorize red "Could not stop easymesh.service. Installed core was not changed." bold
+        rm -rf "$VALIDATED_TEMP_DIR"
+        return 1
+    fi
+
+    if ! install_validated_core_files "$dest_dir" || \
+       [[ "$(get_binary_version_number "$dest_dir/easytier-core" || true)" != "$selected_number" ]] || \
+       [[ "$(get_binary_version_number "$dest_dir/easytier-cli" || true)" != "$selected_number" ]]; then
+        colorize red "Core installation verification failed. Restoring the previous binaries." bold
+        rm -rf "$VALIDATED_TEMP_DIR"
+        restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
+        return 1
+    fi
+    rm -rf "$VALIDATED_TEMP_DIR"
+
+    if [[ -f "$service_file" ]]; then
+        if ! systemctl start easymesh.service || ! systemctl is-active --quiet easymesh.service; then
+            colorize red "The existing service failed to start with the selected core. Rolling back." bold
+            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
+            return 1
+        fi
+
+        pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null)
+        if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+            colorize red "The service has no valid running PID after upgrade. Rolling back." bold
+            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
+            return 1
+        fi
+        running_version=$(get_binary_version_number "/proc/$pid/exe" || true)
+        if [[ "$running_version" != "$selected_number" ]]; then
+            colorize red "Running core version verification failed. Rolling back." bold
+            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
+            return 1
+        fi
+    fi
+
+    colorize green "EasyMesh Core upgraded safely to $CORE_VERSION." bold
+    colorize green "Backup: $backup_dir" bold
+    if [[ -f "$service_file" ]]; then
+        colorize green "Service Status: $(systemctl is-active easymesh.service 2>/dev/null || true)" bold
+    else
+        colorize green "Service Status: missing" bold
+    fi
+    return 0
+}
+
 install_easytier() {
-    # Define the directory and files
-    DEST_DIR="/root/easytier"
-    FILE1="easytier-core"
-    FILE2="easytier-cli"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local DEST_DIR="/root/easytier"
+    local FILE1="easytier-core"
+    local FILE2="easytier-cli"
+    local SCRIPT_DIR LOCAL_CORE_BASE ARCH LOCAL_ARCH_DIR LOCAL_CORE_DIR LOCAL_CORE LOCAL_CLI URL
+    local validation_status
+
+    SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
     LOCAL_CORE_BASE="$SCRIPT_DIR/core/$CORE_VERSION"
     #URL_X86="https://github.com/EasyTier/EasyTier/releases/download/v1.1.0/easytier-x86_64-unknown-linux-musl-v1.1.0.zip"
     #URL_ARM_SOFT="https://github.com/EasyTier/EasyTier/releases/download/v1.1.0/easytier-armv7-unknown-linux-musleabi-v1.1.0.zip"              
@@ -93,68 +394,67 @@ install_easytier() {
     URL_ARM_SOFT="https://github.com/Musixal/Easy-Mesh/raw/main/core/v2.0.3/easytier-linux-armv7/"              
     URL_ARM_HARD="https://github.com/Musixal/Easy-Mesh/raw/main/core/v2.0.3/easytier-linux-armv7hf/"
     
-    if [ -x "$DEST_DIR/$FILE1" ] && [ -x "$DEST_DIR/$FILE2" ]; then
-        colorize green "Behify EasyMesh Core Installed" bold
-        return 0
-    fi
-    
-    # Detect the system architecture
     ARCH=$(uname -m)
-    if [ "$ARCH" = "x86_64" ]; then
-        URL=$URL_X86
-        LOCAL_ARCH_DIR="easytier-linux-x86_64"
-    elif [ "$ARCH" = "armv7l" ]; then
-        if is_arm_hard_float; then
-            URL=$URL_ARM_HARD
-            LOCAL_ARCH_DIR="easytier-linux-armv7hf"
-        else
-            URL=$URL_ARM_SOFT
-            LOCAL_ARCH_DIR="easytier-linux-armv7"
-        fi
-    elif [ "$ARCH" = "aarch64" ]; then
-        LOCAL_ARCH_DIR="easytier-linux-aarch64"
-        if [ -d "$LOCAL_CORE_BASE/easytier-linux-aarch64" ]; then
-            LOCAL_ARCH_DIR="easytier-linux-aarch64"
-        else
-            colorize yellow "No local aarch64 EasyMesh Core package found. Falling back to GitHub download unless EASYMESH_OFFLINE=1.\n" bold
-        fi
-
-        if is_arm_hard_float; then
-            URL=$URL_ARM_HARD
-        else
-            URL=$URL_ARM_SOFT
-        fi
-    else
-        colorize red "Unsupported architecture: $ARCH\n" bold
+    if ! LOCAL_ARCH_DIR=$(resolve_core_arch_directory "$ARCH"); then
+        colorize red "Unsupported architecture: $ARCH" bold
+        colorize red "No core package was selected and the installed core was not changed." bold
         exit 1
     fi
-
     LOCAL_CORE_DIR="$LOCAL_CORE_BASE/$LOCAL_ARCH_DIR"
     LOCAL_CORE="$LOCAL_CORE_DIR/$FILE1"
     LOCAL_CLI="$LOCAL_CORE_DIR/$FILE2"
 
-    if [ -n "$LOCAL_ARCH_DIR" ] && [ -f "$LOCAL_CORE" ] && [ -f "$LOCAL_CLI" ]; then
-        mkdir -p "$DEST_DIR" &> /dev/null
-        cp "$LOCAL_CORE" "$DEST_DIR/$FILE1"
-        cp "$LOCAL_CLI" "$DEST_DIR/$FILE2"
-        chmod +x "$DEST_DIR/$FILE1" "$DEST_DIR/$FILE2"
+    if [[ "$CORE_VERSION_EXPLICIT" == "1" ]] && \
+       { [[ -e "$DEST_DIR/$FILE1" ]] || [[ -e "$DEST_DIR/$FILE2" ]]; }; then
+        upgrade_installed_core "$LOCAL_CORE_DIR" "$ARCH" || exit 1
+        return 0
+    fi
 
-        if "$DEST_DIR/$FILE1" --version &> /dev/null && "$DEST_DIR/$FILE2" --version &> /dev/null; then
+    if [ -x "$DEST_DIR/$FILE1" ] && [ -x "$DEST_DIR/$FILE2" ]; then
+        colorize green "Behify EasyMesh Core Installed" bold
+        return 0
+    fi
+
+    if [[ "$LOCAL_ARCH_DIR" == "easytier-linux-x86_64" ]]; then
+        URL=$URL_X86
+    elif [[ "$ARCH" == "armv7l" ]]; then
+        if [[ "$LOCAL_ARCH_DIR" == "easytier-linux-armv7hf" ]]; then
+            URL=$URL_ARM_HARD
+        else
+            URL=$URL_ARM_SOFT
+        fi
+    fi
+
+    if [ -f "$LOCAL_CORE" ] && [ -f "$LOCAL_CLI" ]; then
+        validate_local_core_candidate "$LOCAL_CORE_DIR" "$ARCH"
+        validation_status=$?
+        if [[ "$validation_status" == "0" ]] && install_validated_core_files "$DEST_DIR" && \
+           "$DEST_DIR/$FILE1" --version &> /dev/null && "$DEST_DIR/$FILE2" --version &> /dev/null; then
+            rm -rf "$VALIDATED_TEMP_DIR"
             colorize green "EasyMesh Core installed from local offline package" bold
             return 0
         fi
-
+        [[ -n "$VALIDATED_TEMP_DIR" ]] && rm -rf "$VALIDATED_TEMP_DIR"
         colorize red "Local EasyMesh Core package is invalid or failed version validation.\n" bold
+        colorize red "Detected architecture: $ARCH" bold
+        colorize red "Selected package: $LOCAL_CORE_DIR" bold
+        if [[ "$validation_status" == "2" ]]; then
+            exit 1
+        fi
         if [ "$EASYMESH_OFFLINE" = "1" ]; then
             colorize red "EASYMESH_OFFLINE=1 is set. Download fallback is disabled.\n" bold
             exit 1
         fi
         colorize yellow "Falling back to GitHub download...\n" bold
-    elif [ "$EASYMESH_OFFLINE" = "1" ]; then
+    elif [[ "$EASYMESH_OFFLINE" == "1" || "$LOCAL_ARCH_DIR" == "easytier-linux-aarch64" ]]; then
         colorize red "Local EasyMesh Core package not found for selected core version: $CORE_VERSION\n" bold
         colorize red "Architecture: $ARCH\n" bold
         colorize red "Expected path: $LOCAL_CORE_DIR\n" bold
-        colorize red "EASYMESH_OFFLINE=1 is set. Download fallback is disabled.\n" bold
+        if [[ "$EASYMESH_OFFLINE" == "1" ]]; then
+            colorize red "EASYMESH_OFFLINE=1 is set. Download fallback is disabled.\n" bold
+        else
+            colorize red "No compatible aarch64 download fallback is configured.\n" bold
+        fi
         exit 1
     fi
 
@@ -360,7 +660,9 @@ display_peers()
 display_routes(){
 
     is_mesh_cli_ready || return 1
-	watch -n1 "$EASY_CLIENT" route
+    colorize yellow "Route output is wide. Use a wide terminal or less -S for best view." bold
+    sleep 2
+	watch -n1 "COLUMNS=220 \"$EASY_CLIENT\" route"
 }
 
 peer_center(){
@@ -764,6 +1066,70 @@ check_core_status(){
     fi
 }
 
+get_installed_core_version() {
+    local core_path="/root/easytier/easytier-core"
+    local version
+
+    if [[ ! -x "$core_path" ]]; then
+        printf 'not installed\n'
+        return 0
+    fi
+
+    version=$("$core_path" --version 2>/dev/null | head -n 1)
+    if [[ -n "$version" ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+get_service_status() {
+    if [[ ! -f "$SERVICE_FILE" ]]; then
+        printf 'missing\n'
+    elif systemctl is-active --quiet easymesh.service; then
+        printf 'active\n'
+    else
+        printf 'inactive\n'
+    fi
+}
+
+get_running_core_version() {
+    local pid
+    local version
+
+    if [[ "$(get_service_status)" != "active" ]]; then
+        printf 'not running\n'
+        return 0
+    fi
+
+    pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null)
+    if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ "$pid" == "0" ]] || [[ ! -x "/proc/$pid/exe" ]]; then
+        printf 'not running\n'
+        return 0
+    fi
+
+    version=$("/proc/$pid/exe" --version 2>/dev/null | head -n 1)
+    if [[ -n "$version" ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+show_runtime_status() {
+    local system_arch core_package
+
+    system_arch=$(uname -m)
+    core_package=$(resolve_core_arch_directory "$system_arch" 2>/dev/null || printf 'unsupported')
+    colorize cyan "System Architecture: $system_arch" bold
+    colorize cyan "Core Package: $core_package" bold
+    colorize cyan "Core status:" bold
+    check_core_status
+    colorize cyan "Installed Core: $(get_installed_core_version)" bold
+    colorize cyan "Running Core: $(get_running_core_version)" bold
+    colorize cyan "Service Status: $(get_service_status)" bold
+}
+
 # New function to remove core
 remove_easymesh_core(){
 	echo
@@ -788,6 +1154,7 @@ display_menu() {
         printf "   | %-36s |\n" "$1"
     }
 
+    colorize cyan "Behify EasyMesh" bold
     printf "   +--------------------------------------+\n"
     print_box_line "Behify EasyMesh"
     print_box_line "VPN Network Solution"
@@ -798,9 +1165,10 @@ display_menu() {
     print_box_line "Channel: BehifyVPN"
     print_box_line "Build: Behify private"
     printf "   +--------------------------------------+\n"
-    check_core_status
+    show_runtime_status
 
     echo ''
+    colorize cyan "Menu options:" bold
     colorize green "	[1] Connect to the Mesh Network" bold 
     colorize yellow "	[2] Display Peers" 
     colorize cyan "	[3] Display Routes" 

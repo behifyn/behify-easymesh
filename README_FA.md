@@ -20,30 +20,39 @@
 
 ```bash
 sudo bash install.sh
-```
-
-نصب آنلاین/با fallback:
-
-```bash
 sudo easymesh
 ```
 
-حالت آفلاین سخت‌گیرانه با هسته تست‌شده پیش‌فرض:
+استفاده از EasyTier v2.6.4:
+
+```bash
+sudo easymesh 2.6.4
+sudo easymesh --core v2.6.4
+```
+
+حالت آفلاین سخت‌گیرانه:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
+sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
-حالت آفلاین سخت‌گیرانه با نسخه مشخص هسته:
+## انتخاب امن هسته بر اساس معماری
+
+بسته محلی هسته بر اساس معماری شناسایی‌شده سیستم انتخاب می‌شود:
+
+- `x86_64` یا `amd64`: `easytier-linux-x86_64`
+- `aarch64` یا `arm64`: `easytier-linux-aarch64`
+
+پشتیبانی موجود ARMv7 در صورت وجود باینری محلی متناظر حفظ شده است. معماری ناشناخته با خطای امن متوقف می‌شود و هرگز به بسته x86_64 هدایت نمی‌شود.
+
+اگر نسخه دیگری نصب باشد، اجرای `sudo easymesh 2.6.4` ارتقای فقط هسته را پیشنهاد می‌دهد. پیش از توقف سرویس، هر دو باینری کاندیدا در فایل‌های موقت کپی و برای تطبیق معماری و نسخه اجرا می‌شوند. پس از تأیید، اسکریپت فقط `easytier-core` و `easytier-cli` را پشتیبان‌گیری و جایگزین می‌کند؛ فایل موجود `easymesh.service`، مقدار `ExecStart` و تنظیمات شبکه بدون تغییر می‌مانند. در صورت شکست نصب یا راه‌اندازی سرویس، نسخه پشتیبان به‌صورت خودکار بازیابی می‌شود.
+
+بررسی نسخه هسته نصب‌شده/در حال اجرا:
 
 ```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
-```
-
-تست هسته جدید در آینده:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
+/root/easytier/easytier-core --version
+PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
 ```
 
 تست بسته آفلاین:
@@ -66,9 +75,18 @@ core/v2.0.3/
 
 نسخه پیش‌فرض انتخاب‌شده هسته `v2.0.3` است و همین نسخه فعلا smoke-test شده است.
 
-پشتیبانی از `v2.6.4` از طریق `EASYMESH_CORE_VERSION` آماده شده است، اما برای استفاده آفلاین سخت‌گیرانه باید فایل‌های باینری متناظر در مسیر زیر اضافه شوند:
+بسته‌های محلی `v2.6.4` برای x86_64 و aarch64 در مسیر زیر قرار دارند:
 
 core/v2.6.4/
+
+گزینه‌های پیشرفته زیر فقط برای تست پایداری آینده مستند شده‌اند و به صورت پیش‌فرض فعال نیستند:
+
+```text
+--enable-kcp-proxy
+--enable-quic-proxy
+--compression zstd
+--multi-thread
+```
 
 ## Attribution
 

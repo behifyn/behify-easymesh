@@ -20,30 +20,39 @@ Clone or upload this repository to your server, then run:
 
 ```bash
 sudo bash install.sh
-```
-
-Online/fallback install:
-
-```bash
 sudo easymesh
 ```
 
-Strict offline with default tested core:
+Use EasyTier v2.6.4:
+
+```bash
+sudo easymesh 2.6.4
+sudo easymesh --core v2.6.4
+```
+
+Strict offline:
 
 ```bash
 sudo EASYMESH_OFFLINE=1 easymesh
+sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
-Strict offline with explicit core version:
+## Architecture-safe core selection
+
+Local core packages are selected from the detected system architecture:
+
+- `x86_64` or `amd64`: `easytier-linux-x86_64`
+- `aarch64` or `arm64`: `easytier-linux-aarch64`
+
+Existing ARMv7 package selection remains supported where matching local binaries are present. Unknown architectures stop safely and are never redirected to an x86_64 package.
+
+Running `sudo easymesh 2.6.4` when another core version is installed offers a core-only upgrade. Both candidate binaries are copied to temporary files and executed for architecture and version validation before the current service is stopped. After confirmation, the script backs up and replaces only `easytier-core` and `easytier-cli`; the existing `easymesh.service` file, its `ExecStart`, and the mesh configuration are preserved. A failed installation or service restart automatically restores the backup.
+
+Check installed/running core version:
 
 ```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.0.3 easymesh
-```
-
-Future new core test:
-
-```bash
-sudo EASYMESH_OFFLINE=1 EASYMESH_CORE_VERSION=v2.6.4 easymesh
+/root/easytier/easytier-core --version
+PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
 ```
 
 Smoke/offline test package:
@@ -67,11 +76,20 @@ core/v2.0.3/
 
 The default selected core is `v2.0.3`, which is the currently smoke-tested version.
 
-Support for `v2.6.4` is prepared through `EASYMESH_CORE_VERSION`, but strict offline use requires adding matching local binaries under:
+Local `v2.6.4` packages for x86_64 and aarch64 are stored under:
 
 core/v2.6.4/
 
 Future versions may include newer EasyTier core builds while keeping older versions as fallback.
+
+Future stability test candidates are documented only and are not enabled by default:
+
+```text
+--enable-kcp-proxy
+--enable-quic-proxy
+--compression zstd
+--multi-thread
+```
 
 Attribution
 
