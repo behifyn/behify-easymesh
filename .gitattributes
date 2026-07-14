@@ -2,6 +2,7 @@
 *.sh text eol=lf
 easymesh text eol=lf
 install.sh text eol=lf
+relay-manager text eol=lf
 
 # Markdown files
 *.md text eol=lf

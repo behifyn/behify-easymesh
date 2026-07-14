@@ -52,6 +52,8 @@ Running `sudo easymesh 2.6.4` when another core version is installed offers a co
 
 Menu option `[12] Relay / Port Routing` provides an optional Dokodemo-Door relay. The end user does not need 3x-ui, Hiddify Manager, or an existing Xray installation. Behify downloads and runs a dedicated Xray binary that is isolated from any panel-managed Xray already installed on the server.
 
+Xray is downloaded only after explicit confirmation. The manager accepts only a stable, non-draft, non-prerelease release from the official `XTLS/Xray-core` GitHub repository. The archive must include an official GitHub SHA-256 digest, and checksum or archive-path validation failure stops installation before the binary is executed or activated.
+
 Relay modes are `tcp`, `udp`, and `both`. For example, a UDP relay can listen on public port `443` and forward it to EasyTier mesh address `10.144.144.1` port `443`:
 
 ```text
@@ -75,6 +77,8 @@ Dedicated relay paths:
 TCP and UDP conflicts are checked separately with `ss`. Sensitive ports such as SSH port `22` produce an additional confirmation warning. EasyTier route checks are advisory: a route warning does not overwrite or remove the existing relay configuration.
 
 Every configuration change backs up the current relay files, generates and validates temporary JSON, tests it with the dedicated Xray binary, and then atomically installs it. Only `behify-relay.service` is restarted. If validation, installation, or service startup fails, the previous relay configuration is restored automatically. The relay service uses `Wants=easymesh.service`; it does not contain or modify mesh IP, secret, peer, or `ExecStart` configuration.
+
+When the last enabled relay is removed, the validated empty configuration is retained and `behify-relay.service` is stopped and disabled. The relay manager remains installed so another relay can be added later.
 
 Check installed/running core version:
 
