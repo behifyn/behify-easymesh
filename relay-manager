@@ -13,6 +13,21 @@ RELAY_SERVICE_NAME="behify-relay.service"
 XRAY_RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 RELAY_TEMP_DIRS=()
 RELAY_TEMP_FILES=()
+RELAY_APPLY_FAILURE=""
+
+relay_color() {
+    local code="$1"
+    shift
+    if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+        printf '\033[%sm%s\033[0m\n' "$code" "$*"
+    else
+        printf '%s\n' "$*"
+    fi
+}
+
+relay_box_line() {
+    printf '| %-36s |\n' "$1"
+}
 
 if [[ $EUID -ne 0 ]]; then
     printf 'Relay management must be run as root.\n' >&2
@@ -25,6 +40,11 @@ relay_pause() {
 
 relay_error() {
     printf 'Error: %s\n' "$1" >&2
+}
+
+relay_service_is_owned() {
+    [[ -f "$RELAY_SERVICE_FILE" ]] &&
+        grep -Fqx "ExecStart=$RELAY_XRAY_BINARY run -config $RELAY_CONFIG" "$RELAY_SERVICE_FILE"
 }
 
 safe_remove_temp_dir() {
@@ -347,6 +367,11 @@ ensure_relay_service() {
         safe_remove_temp_dir "$temp_dir"
         return 0
     fi
+    if [[ -f "$RELAY_SERVICE_FILE" ]] && ! relay_service_is_owned; then
+        safe_remove_temp_dir "$temp_dir"
+        relay_error "Refusing to overwrite an unrecognized service file at $RELAY_SERVICE_FILE."
+        return 1
+    fi
 
     if ! install -m 0644 "$temp_service" "$RELAY_SERVICE_FILE"; then
         safe_remove_temp_dir "$temp_dir"
@@ -472,13 +497,16 @@ apply_relay_definitions() {
     local candidate_definitions="$1"
     local temp_dir xray_temp_dir backup_dir timestamp staged_relays staged_config
     local confirm old_xray_target validation_binary relay_count
-    local service_was_active=0 xray_activated=0
+    local service_was_active=0 service_was_enabled=0 service_file_existed=0 xray_activated=0
 
+    RELAY_APPLY_FAILURE="transaction_failed"
     if [[ ! -x "$RELAY_XRAY_BINARY" ]] && ! resolve_xray_asset >/dev/null; then
         relay_error "Unsupported Xray architecture: $(uname -m)"
         return 1
     fi
     systemctl is-active --quiet "$RELAY_SERVICE_NAME" && service_was_active=1
+    systemctl is-enabled --quiet "$RELAY_SERVICE_NAME" && service_was_enabled=1
+    [[ -f "$RELAY_SERVICE_FILE" ]] && service_file_existed=1
     timestamp=$(date +%Y%m%d-%H%M%S)
     backup_dir="$RELAY_CONFIG_DIR/backups/$timestamp"
     while [[ -e "$backup_dir" ]]; do
@@ -517,12 +545,16 @@ apply_relay_definitions() {
         validation_binary="$RELAY_XRAY_BINARY"
     else
         printf 'The isolated Behify relay Xray is not installed.\n'
+        printf 'The relay component requires its own isolated Xray installation.\n'
+        printf 'Existing panel and system Xray installations will not be touched.\n'
         read -r -p "Download and install the stable official Xray release? [y/N] " confirm
         [[ "$confirm" =~ ^[Yy]$ ]] || {
+            RELAY_APPLY_FAILURE="xray_cancelled"
             safe_remove_temp_dir "$temp_dir"
             return 1
         }
         fetch_latest_xray_release || {
+            RELAY_APPLY_FAILURE="xray_install_failed"
             safe_remove_temp_dir "$temp_dir"
             return 1
         }
@@ -531,6 +563,7 @@ apply_relay_definitions() {
             return 1
         }
         download_verified_xray_candidate "$xray_temp_dir" || {
+            RELAY_APPLY_FAILURE="xray_install_failed"
             safe_remove_temp_dir "$xray_temp_dir"
             safe_remove_temp_dir "$temp_dir"
             return 1
@@ -539,16 +572,20 @@ apply_relay_definitions() {
     fi
 
     if ! "$validation_binary" run -test -config "$temp_dir/config.json" >/dev/null 2>&1; then
+        RELAY_APPLY_FAILURE="config_rejected"
         relay_error "Candidate Xray configuration test failed. Production files were not changed."
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         return 1
     fi
 
+    begin_relay_critical_section
     if [[ "$validation_binary" != "$RELAY_XRAY_BINARY" ]]; then
         if ! activate_xray_candidate "$XRAY_LATEST_VERSION" "$validation_binary"; then
+            RELAY_APPLY_FAILURE="xray_install_failed"
             safe_remove_temp_dir "$xray_temp_dir"
             safe_remove_temp_dir "$temp_dir"
+            end_relay_critical_section
             return 1
         fi
         xray_activated=1
@@ -560,6 +597,7 @@ apply_relay_definitions() {
         }
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
+        end_relay_critical_section
         return 1
     fi
 
@@ -569,6 +607,7 @@ apply_relay_definitions() {
         fi
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
+        end_relay_critical_section
         return 1
     }
     make_relay_temp_file staged_config "$RELAY_CONFIG_DIR/.config.json.XXXXXX" || {
@@ -578,9 +617,9 @@ apply_relay_definitions() {
         fi
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
+        end_relay_critical_section
         return 1
     }
-    begin_relay_critical_section
     if ! install -m 0600 "$temp_dir/relays.json" "$staged_relays" || \
        ! install -m 0600 "$temp_dir/config.json" "$staged_config" || \
        ! mv -f "$staged_relays" "$RELAY_DEFINITIONS" || \
@@ -632,7 +671,9 @@ apply_relay_definitions() {
 
     if ! systemctl enable "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || \
        ! systemctl restart "$RELAY_SERVICE_NAME" || \
-       ! systemctl is-active --quiet "$RELAY_SERVICE_NAME"; then
+       ! systemctl is-active --quiet "$RELAY_SERVICE_NAME" || \
+       ! verify_relay_sockets "$temp_dir/relays.json"; then
+        RELAY_APPLY_FAILURE="service_rollback"
         relay_error "Relay service failed after configuration change. Rolling back."
         if restore_relay_config_backup "$backup_dir"; then
             printf 'Rollback completed. Previous relay files were restored.\n'
@@ -655,6 +696,11 @@ apply_relay_definitions() {
         else
             systemctl stop "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || true
         fi
+        [[ "$service_was_enabled" == "1" ]] || systemctl disable "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || true
+        if [[ "$service_file_existed" == "0" && -f "$RELAY_SERVICE_FILE" ]] && relay_service_is_owned; then
+            rm -f "$RELAY_SERVICE_FILE"
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         end_relay_critical_section
@@ -664,6 +710,7 @@ apply_relay_definitions() {
     [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
     safe_remove_temp_dir "$temp_dir"
     end_relay_critical_section
+    RELAY_APPLY_FAILURE=""
     printf 'Relay configuration applied successfully. Backup: %s\n' "$backup_dir"
 }
 
@@ -725,6 +772,29 @@ relay_port_in_use() {
     return 1
 }
 
+verify_relay_sockets() {
+    local definitions="$1"
+    local name protocol listen_address listen_port network check_status attempt
+
+    while IFS=$'\t' read -r name protocol listen_address listen_port; do
+        [[ -n "$name" ]] || continue
+        for network in tcp udp; do
+            [[ "$protocol" == "$network" || "$protocol" == "both" ]] || continue
+            check_status=1
+            for attempt in {1..10}; do
+                relay_port_in_use "$network" "$listen_address" "$listen_port"
+                check_status=$?
+                [[ "$check_status" == "0" || "$check_status" == "2" ]] && break
+                sleep 0.2
+            done
+            if [[ "$check_status" != "0" ]]; then
+                relay_error "Relay $name did not open the requested $network socket on $listen_address:$listen_port."
+                return 1
+            fi
+        done
+    done < <(jq -r '.[] | select(.enabled == true) | [.name, .protocol, .listen_address, .listen_port] | @tsv' "$definitions")
+}
+
 relay_definition_conflicts() {
     local protocol="$1"
     local listen_address="$2"
@@ -776,87 +846,132 @@ check_easytier_route() {
     printf 'Kernel route to %s while EasyMesh is active: %s\n' "$destination_ip" "$kernel_route"
 }
 
+relay_add_failed() {
+    printf '\nRelay was not saved because %s\n' "$1"
+}
+
 add_relay() {
     local name protocol listen_address listen_port destination_ip destination_port
-    local temp_dir temp_definitions result conflict_status
+    local temp_dir temp_definitions result conflict_status confirm network
 
     resolve_xray_asset >/dev/null || {
         relay_error "Unsupported Xray architecture: $(uname -m)"
+        relay_add_failed "this server architecture is unsupported."
         return 1
     }
-    ensure_relay_dependencies && ensure_relay_storage || return 1
+    ensure_relay_dependencies && ensure_relay_storage || {
+        relay_add_failed "required local tools or storage could not be prepared."
+        return 1
+    }
 
-    read -r -p "Relay name: " name
+    read -r -p "Relay name: " name || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
     if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
         relay_error "Name must use 1-64 letters, numbers, dots, underscores, or hyphens."
+        relay_add_failed "the relay name was invalid."
         return 1
     fi
     if jq -e --arg name "$name" 'any(.[]; .name == $name)' "$RELAY_DEFINITIONS" >/dev/null; then
         relay_error "A relay named $name already exists."
+        relay_add_failed "the relay name is already in use."
         return 1
     fi
 
-    read -r -p "Protocol [tcp/udp/both]: " protocol
+    printf '%s\n' \
+        'tcp: normal TCP-based VLESS, VMess, Trojan, Reality, WebSocket, and similar transports.' \
+        'udp: direct UDP forwarding only.' \
+        'both: creates separate TCP and UDP listeners on the same numerical port.'
+    read -r -p "Protocol [tcp/udp/both] (default: tcp): " protocol || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
+    protocol=${protocol:-tcp}
     case "$protocol" in
         tcp|udp|both) ;;
-        *) relay_error "Protocol must be tcp, udp, or both."; return 1 ;;
+        *) relay_error "Protocol must be tcp, udp, or both."; relay_add_failed "the protocol was invalid."; return 1 ;;
     esac
 
-    read -r -p "Listen address [0.0.0.0]: " listen_address
+    read -r -p "Listen address [0.0.0.0]: " listen_address || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
     listen_address=${listen_address:-0.0.0.0}
     is_valid_listen_address "$listen_address" || {
         relay_error "Listen address must be 0.0.0.0, ::, or an IP assigned to this server."
+        relay_add_failed "the listen address was invalid."
         return 1
     }
 
-    read -r -p "Listen port: " listen_port
+    read -r -p "Listen port: " listen_port || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
     is_valid_port "$listen_port" || {
         relay_error "Listen port must be numeric and between 1 and 65535."
+        relay_add_failed "the listen port was invalid."
         return 1
     }
     listen_port=$((10#$listen_port))
-    warn_sensitive_port "$listen_port" || return 1
-
-    if relay_definition_conflicts "$protocol" "$listen_address" "$listen_port"; then
-        relay_error "An enabled relay already uses port $listen_port for an overlapping protocol."
-        return 1
-    fi
-    if [[ "$protocol" == "tcp" || "$protocol" == "both" ]]; then
-        relay_port_in_use tcp "$listen_address" "$listen_port"
-        conflict_status=$?
-        if [[ "$conflict_status" == "0" ]]; then
-            relay_error "TCP port $listen_port is already in use on an overlapping address."
-            return 1
-        elif [[ "$conflict_status" == "2" ]]; then
-            return 1
-        fi
-    fi
-    if [[ "$protocol" == "udp" || "$protocol" == "both" ]]; then
-        relay_port_in_use udp "$listen_address" "$listen_port"
-        conflict_status=$?
-        if [[ "$conflict_status" == "0" ]]; then
-            relay_error "UDP port $listen_port is already in use on an overlapping address."
-            return 1
-        elif [[ "$conflict_status" == "2" ]]; then
-            return 1
-        fi
-    fi
-
-    read -r -p "Destination IP: " destination_ip
-    is_valid_ip "$destination_ip" || {
-        relay_error "Destination must be a valid IP address."
+    warn_sensitive_port "$listen_port" || {
+        relay_add_failed "the sensitive-port confirmation was cancelled."
         return 1
     }
-    read -r -p "Destination port: " destination_port
+
+    for network in tcp udp; do
+        [[ "$protocol" == "$network" || "$protocol" == "both" ]] || continue
+        if relay_definition_conflicts "$network" "$listen_address" "$listen_port"; then
+            relay_error "An enabled relay already uses $network port $listen_port on an overlapping address."
+            relay_add_failed "the requested $network listener conflicts with an existing relay."
+            return 1
+        fi
+        relay_port_in_use "$network" "$listen_address" "$listen_port"
+        conflict_status=$?
+        if [[ "$conflict_status" == "0" ]]; then
+            relay_error "${network^^} port $listen_port is already in use on an overlapping address."
+            relay_add_failed "the requested $network listener is already in use."
+            return 1
+        elif [[ "$conflict_status" == "2" ]]; then
+            relay_add_failed "the $network listener conflict check failed."
+            return 1
+        fi
+    done
+
+    read -r -p "Destination IP: " destination_ip || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
+    is_valid_ip "$destination_ip" || {
+        relay_error "Destination must be a valid IP address."
+        relay_add_failed "the destination IP was invalid."
+        return 1
+    }
+    read -r -p "Destination port: " destination_port || {
+        relay_add_failed "input ended before the relay was confirmed."
+        return 1
+    }
     is_valid_port "$destination_port" || {
         relay_error "Destination port must be numeric and between 1 and 65535."
+        relay_add_failed "the destination port was invalid."
         return 1
     }
     destination_port=$((10#$destination_port))
-    warn_sensitive_port "$destination_port" || return 1
-    check_easytier_route "$destination_ip" || true
 
-    make_relay_temp_dir temp_dir || return 1
+    printf '\nRelay summary:\n'
+    printf '  Name: %s\n  Protocol: %s\n  Public listener: %s:%s\n  Destination: %s:%s\n' \
+        "$name" "$protocol" "$listen_address" "$listen_port" "$destination_ip" "$destination_port"
+    read -r -p "Add this relay? [y/N] " confirm || confirm=""
+    [[ "$confirm" =~ ^[Yy]$ ]] || {
+        relay_add_failed "confirmation was cancelled."
+        return 1
+    }
+
+    check_easytier_route "$destination_ip" || true
+    make_relay_temp_dir temp_dir || {
+        relay_add_failed "temporary configuration staging failed."
+        return 1
+    }
     temp_definitions="$temp_dir/relays.json"
     if ! jq \
         --arg name "$name" \
@@ -865,35 +980,51 @@ add_relay() {
         --argjson listen_port "$listen_port" \
         --arg destination_ip "$destination_ip" \
         --argjson destination_port "$destination_port" \
-        '. + [{
-            name: $name,
-            protocol: $protocol,
-            listen_address: $listen_address,
-            listen_port: $listen_port,
-            destination_ip: $destination_ip,
-            destination_port: $destination_port,
-            enabled: true
-        }]' "$RELAY_DEFINITIONS" > "$temp_definitions"; then
+        '. + [{name: $name, protocol: $protocol, listen_address: $listen_address,
+               listen_port: $listen_port, destination_ip: $destination_ip,
+               destination_port: $destination_port, enabled: true}]' \
+        "$RELAY_DEFINITIONS" > "$temp_definitions"; then
         safe_remove_temp_dir "$temp_dir"
+        relay_add_failed "the candidate relay definition could not be generated."
         return 1
     fi
 
     apply_relay_definitions "$temp_definitions"
     result=$?
     safe_remove_temp_dir "$temp_dir"
-    return "$result"
+    if [[ "$result" != "0" ]]; then
+        case "$RELAY_APPLY_FAILURE" in
+            xray_cancelled) relay_add_failed "the isolated Xray installation was cancelled." ;;
+            xray_install_failed) relay_add_failed "the Xray download or integrity verification failed." ;;
+            config_rejected) relay_add_failed "the candidate Xray configuration was rejected." ;;
+            service_rollback) printf '\nRelay configuration was rolled back because the service or requested listener failed to start.\n' ;;
+            *) relay_add_failed "the transactional configuration update failed." ;;
+        esac
+        return 1
+    fi
+
+    printf '\nRelay added successfully.\n'
+    printf 'Name: %s\nPublic listener: %s:%s/%s\nDestination: %s:%s\nService: active\n' \
+        "$name" "$listen_address" "$listen_port" "$protocol" "$destination_ip" "$destination_port"
 }
 
 list_relays() {
     ensure_relay_dependencies && ensure_relay_storage || return 1
     if [[ $(jq 'length' "$RELAY_DEFINITIONS") -eq 0 ]]; then
-        printf 'No relays configured.\n'
+        printf 'No relays are configured.\n'
+        printf 'Select "Add Relay" to create the first relay.\n'
         return 0
     fi
 
-    jq -r '.[] |
-        "Name: \(.name)\n  Mode: \(.protocol)\n  Listen: \(.listen_address):\(.listen_port)\n  Destination: \(.destination_ip):\(.destination_port)\n  Enabled: \(.enabled)\n"' \
-        "$RELAY_DEFINITIONS"
+    printf '%-16s %-9s %-24s %-24s %s\n' \
+        'Name' 'Protocol' 'Public Listener' 'Destination' 'Status'
+    jq -r '.[] | [.name, .protocol, (.listen_address + ":" + (.listen_port | tostring)),
+        (.destination_ip + ":" + (.destination_port | tostring)),
+        (if .enabled then "Enabled" else "Disabled" end)] | @tsv' "$RELAY_DEFINITIONS" |
+        while IFS=$'\t' read -r name protocol listener destination status; do
+            printf '%-16s %-9s %-24s %-24s %s\n' \
+                "$name" "$protocol" "$listener" "$destination" "$status"
+        done
 }
 
 remove_relay() {
@@ -964,6 +1095,62 @@ show_xray_version() {
         return 0
     fi
     "$RELAY_XRAY_BINARY" version
+}
+
+xray_status_install() {
+    local confirm temp_dir version
+
+    if [[ -x "$RELAY_XRAY_BINARY" ]]; then
+        version=$(get_installed_xray_version || true)
+        printf 'Isolated relay Xray is installed: v%s\n' "${version:-unknown}"
+        printf 'Binary: %s\n' "$RELAY_XRAY_BINARY"
+        return 0
+    fi
+
+    printf 'Isolated relay Xray is not installed.\n'
+    printf 'This component uses only %s.\n' "$RELAY_XRAY_ROOT"
+    printf 'Existing panel and system Xray installations will not be touched.\n'
+    read -r -p "Download and install the stable official Xray release? [y/N] " confirm || confirm=""
+    [[ "$confirm" =~ ^[Yy]$ ]] || {
+        printf 'Isolated Xray installation cancelled.\n'
+        return 0
+    }
+
+    resolve_xray_asset >/dev/null && ensure_relay_dependencies && fetch_latest_xray_release || return 1
+    make_relay_temp_dir temp_dir || return 1
+    download_verified_xray_candidate "$temp_dir" || {
+        safe_remove_temp_dir "$temp_dir"
+        return 1
+    }
+    begin_relay_critical_section
+    if ! activate_xray_candidate "$XRAY_LATEST_VERSION" "$XRAY_CANDIDATE_BINARY"; then
+        end_relay_critical_section
+        safe_remove_temp_dir "$temp_dir"
+        return 1
+    fi
+    end_relay_critical_section
+    safe_remove_temp_dir "$temp_dir"
+    version=$(get_installed_xray_version || true)
+    printf 'Isolated relay Xray installed successfully: v%s\n' "${version:-unknown}"
+}
+
+relay_diagnostics() {
+    local definitions_status="missing" config_status="missing"
+
+    [[ -f "$RELAY_DEFINITIONS" ]] && definitions_status="invalid"
+    [[ -f "$RELAY_DEFINITIONS" ]] && jq empty "$RELAY_DEFINITIONS" >/dev/null 2>&1 && definitions_status="valid"
+    [[ -f "$RELAY_CONFIG" ]] && config_status="invalid"
+    [[ -f "$RELAY_CONFIG" ]] && jq empty "$RELAY_CONFIG" >/dev/null 2>&1 && config_status="valid"
+    printf 'Architecture: %s\n' "$(uname -m)"
+    printf 'Xray binary: %s\n' "$RELAY_XRAY_BINARY"
+    printf 'Definitions: %s (%s)\n' "$RELAY_DEFINITIONS" "$definitions_status"
+    printf 'Generated config: %s (%s)\n' "$RELAY_CONFIG" "$config_status"
+    printf 'Service unit: %s\n' "$RELAY_SERVICE_FILE"
+    if [[ -f "$RELAY_SERVICE_FILE" ]]; then
+        systemctl show "$RELAY_SERVICE_NAME" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
+    else
+        printf 'Service: not installed\n'
+    fi
 }
 
 get_installed_xray_version() {
@@ -1127,12 +1314,19 @@ remove_relay_component() {
     local unit_changed=0
 
     printf 'This removes only the Behify relay service, relay configs, and isolated Xray.\n'
-    read -r -p "Remove the Behify relay component? [y/N] " confirm
+    read -r -p "Remove the Behify relay component? [y/N] " confirm || confirm=""
     [[ "$confirm" =~ ^[Yy]$ ]] || return 0
 
-    if [[ -f "$RELAY_SERVICE_FILE" ]] || \
-       systemctl is-active --quiet "$RELAY_SERVICE_NAME" || \
-       systemctl is-enabled --quiet "$RELAY_SERVICE_NAME"; then
+    if [[ -f "$RELAY_SERVICE_FILE" ]] && ! relay_service_is_owned; then
+        relay_error "The service file at $RELAY_SERVICE_FILE is not owned by this relay manager. Removal aborted."
+        return 1
+    fi
+    if [[ ! -f "$RELAY_SERVICE_FILE" ]] && \
+       { systemctl is-active --quiet "$RELAY_SERVICE_NAME" || systemctl is-enabled --quiet "$RELAY_SERVICE_NAME"; }; then
+        relay_error "A loaded service named $RELAY_SERVICE_NAME exists, but ownership cannot be verified. Removal aborted."
+        return 1
+    fi
+    if relay_service_is_owned; then
         systemctl disable --now "$RELAY_SERVICE_NAME" || {
             relay_error "Could not stop and disable $RELAY_SERVICE_NAME. Removal aborted."
             return 1
@@ -1148,21 +1342,52 @@ remove_relay_component() {
     printf 'Behify relay component removed. Existing Xray and panel installations were not touched.\n'
 }
 
+get_relay_dashboard_count() {
+    if [[ ! -f "$RELAY_DEFINITIONS" ]]; then
+        printf '0\n'
+    elif command -v jq >/dev/null 2>&1 && jq empty "$RELAY_DEFINITIONS" >/dev/null 2>&1; then
+        jq 'length' "$RELAY_DEFINITIONS"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+get_relay_dashboard_service() {
+    if [[ ! -f "$RELAY_SERVICE_FILE" ]]; then
+        printf 'Not installed\n'
+    elif systemctl is-active --quiet "$RELAY_SERVICE_NAME"; then
+        printf 'Active\n'
+    else
+        printf 'Inactive\n'
+    fi
+}
+
 display_relay_menu() {
+    local xray_label relay_count service_label version
+
     clear
+    version=$(get_installed_xray_version || true)
+    [[ -n "$version" ]] && xray_label="Installed v$version" || xray_label="Not installed"
+    relay_count=$(get_relay_dashboard_count)
+    service_label=$(get_relay_dashboard_service)
+
+    relay_color '1;36' 'Behify Relay / Port Routing'
+    printf '+--------------------------------------+\n'
+    relay_box_line "Xray: $xray_label"
+    relay_box_line "Relays: $relay_count"
+    relay_box_line "Service: $service_label"
+    printf '+--------------------------------------+\n'
+    relay_color '1;36' 'Menu options:'
     printf '%s\n' \
-        '+--------------------------------------+' \
-        '| Behify Relay / Port Routing          |' \
-        '+--------------------------------------+' \
         '  1. Add Relay' \
         '  2. List Relays' \
         '  3. Remove Relay' \
         '  4. Relay Status' \
         '  5. Restart Relay' \
         '  6. View Relay Logs' \
-        '  7. Xray Version' \
-        '  8. Check Xray Update' \
-        '  9. Update Xray' \
+        '  7. Xray Status / Install' \
+        '  8. Update Xray' \
+        '  9. Diagnostics' \
         ' 10. Remove Relay Component' \
         '  0. Back'
 }
@@ -1180,9 +1405,9 @@ while true; do
         4) relay_status; relay_pause ;;
         5) restart_relay; relay_pause ;;
         6) view_relay_logs; relay_pause ;;
-        7) show_xray_version; relay_pause ;;
-        8) check_xray_update; relay_pause ;;
-        9) update_xray; relay_pause ;;
+        7) xray_status_install; relay_pause ;;
+        8) update_xray; relay_pause ;;
+        9) relay_diagnostics; relay_pause ;;
         10) remove_relay_component; relay_pause ;;
         0) exit 0 ;;
         *) printf 'Invalid option.\n'; relay_pause ;;

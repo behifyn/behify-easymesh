@@ -488,6 +488,8 @@ generate_random_secret() {
 #Var
 EASY_CLIENT='/root/easytier/easytier-cli'
 SERVICE_FILE="/etc/systemd/system/easymesh.service"
+MAIN_CORE_VERSION=""
+EASY_CLIENT_NO_TRUNC=""
     
 connect_network_pool(){
 	clear
@@ -652,23 +654,47 @@ is_mesh_cli_ready() {
     return 0
 }
 
+easy_client_supports_no_trunc() {
+    if [[ -z "$EASY_CLIENT_NO_TRUNC" ]]; then
+        if "$EASY_CLIENT" --help 2>&1 | grep -q -- '--no-trunc'; then
+            EASY_CLIENT_NO_TRUNC="yes"
+        else
+            EASY_CLIENT_NO_TRUNC="no"
+        fi
+    fi
+    [[ "$EASY_CLIENT_NO_TRUNC" == "yes" ]]
+}
+
+watch_mesh_view() {
+    local view="$1"
+    local client_command quoted_client
+
+    printf -v quoted_client '%q' "$EASY_CLIENT"
+    if easy_client_supports_no_trunc; then
+        client_command="COLUMNS=220 $quoted_client --no-trunc $view"
+    else
+        client_command="COLUMNS=220 $quoted_client $view"
+    fi
+    colorize yellow "Output is refreshed every second. Press Ctrl+C to return to the menu." bold
+    watch -n1 -- "$client_command"
+}
+
 display_peers()
 {
     is_mesh_cli_ready || return 1
-	watch -n1 "$EASY_CLIENT" peer
+	watch_mesh_view peer
 }
 display_routes(){
 
     is_mesh_cli_ready || return 1
     colorize yellow "Route output is wide. Use a wide terminal or less -S for best view." bold
-    sleep 2
-	watch -n1 "COLUMNS=220 \"$EASY_CLIENT\" route"
+	watch_mesh_view route
 }
 
 peer_center(){
 
     is_mesh_cli_ready || return 1
-	watch -n1 "$EASY_CLIENT" peer-center
+	watch_mesh_view peer-center
 }
 
 restart_easymesh_service() {
@@ -690,12 +716,19 @@ restart_easymesh_service() {
 }
 
 remove_easymesh_service() {
+	local confirm
 	echo
 	if [[ ! -f $SERVICE_FILE ]]; then
 		 colorize red "	Behify EasyMesh service does not exists." bold
 		 sleep 1
 		 return 1
 	fi
+    colorize yellow "This will stop, disable, and remove $SERVICE_FILE." bold
+    read -r -p "Remove the EasyMesh service? [y/N] " confirm || confirm=""
+    [[ "$confirm" =~ ^[Yy]$ ]] || {
+        colorize yellow "Service removal cancelled." bold
+        return 0
+    }
     colorize yellow "	Stopping Behify EasyMesh service..." bold
     sudo systemctl stop easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
@@ -790,17 +823,46 @@ set_watchdog(){
 
 }
 
+is_valid_watchdog_ip() {
+    command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$1" >/dev/null 2>&1
+}
+
+is_integer_in_range() {
+    local value="$1" minimum="$2" maximum="$3"
+    [[ "$value" =~ ^[0-9]+$ ]] && (( 10#$value >= minimum && 10#$value <= maximum ))
+}
+
 start_watchdog(){
+	local IP_ADDRESS LATENCY_THRESHOLD CHECK_INTERVAL WATCHDOG_SERVICE_FILE
 	clear
 	colorize cyan "Important: You can check the status of the service \nand restart it if the latency is higher than a certain limit. \nI recommend to run it only on one server and preferably outside (Kharej) server" bold
 	echo ''
 	
-	read -p "Enter the local IP address to monitor: " IP_ADDRESS
-	read -p "Enter the latency threshold in ms (200): " LATENCY_THRESHOLD
-	read -p "Enter the time between checks in seconds (8): " CHECK_INTERVAL
-	
-	
-	stop_watchdog
+	read -r -p "Enter the destination IP address to monitor: " IP_ADDRESS || return 1
+	read -r -p "Enter the latency failure threshold in ms [200]: " LATENCY_THRESHOLD || return 1
+	read -r -p "Enter the time between checks in seconds [8]: " CHECK_INTERVAL || return 1
+	LATENCY_THRESHOLD=${LATENCY_THRESHOLD:-200}
+	CHECK_INTERVAL=${CHECK_INTERVAL:-8}
+	if ! is_valid_watchdog_ip "$IP_ADDRESS"; then
+		colorize red "Destination must be a valid IPv4 or IPv6 address (python3 is required for validation)." bold
+		press_key
+		return 1
+	fi
+	if ! is_integer_in_range "$LATENCY_THRESHOLD" 1 60000; then
+		colorize red "Latency failure threshold must be an integer from 1 to 60000 ms." bold
+		press_key
+		return 1
+	fi
+	if ! is_integer_in_range "$CHECK_INTERVAL" 1 3600; then
+		colorize red "Check interval must be an integer from 1 to 3600 seconds." bold
+		press_key
+		return 1
+	fi
+
+	if [[ -f /etc/systemd/system/easymesh-watchdog.service ]]; then
+		stop_watchdog
+	fi
 	touch /etc/monitor.sh /etc/monitor.log &> /dev/null
 	
 cat << EOF | sudo tee /etc/monitor.sh > /dev/null
@@ -868,8 +930,8 @@ EOF
 	colorize yellow "Creating a service for watchdog" bold
 	echo
     
-SERVICE_FILE="/etc/systemd/system/easymesh-watchdog.service"    
-cat > $SERVICE_FILE <<EOF
+WATCHDOG_SERVICE_FILE="/etc/systemd/system/easymesh-watchdog.service"
+cat > "$WATCHDOG_SERVICE_FILE" <<EOF
 [Unit]
 Description=EasyMesh Watchdog Service
 After=network.target
@@ -894,10 +956,10 @@ press_key
 
 # Function to stop the watchdog
 stop_watchdog() {
+	local WATCHDOG_SERVICE_FILE="/etc/systemd/system/easymesh-watchdog.service"
 	echo 
-	SERVICE_FILE="/etc/systemd/system/easymesh-watchdog.service" 
 	
-	if [[ ! -f $SERVICE_FILE ]]; then
+	if [[ ! -f $WATCHDOG_SERVICE_FILE ]]; then
 		 colorize red "Watchdog service does not exists." bold
 		 sleep 1
 		 return 1
@@ -905,7 +967,7 @@ stop_watchdog() {
 	
     systemctl disable --now easymesh-watchdog.service &> /dev/null
     rm -f /etc/monitor.sh /etc/monitor.log &> /dev/null 
-    rm -f "$SERVICE_FILE"  &> /dev/null 
+    rm -f "$WATCHDOG_SERVICE_FILE" &> /dev/null
     systemctl daemon-reload &> /dev/null
     colorize yellow "Watchdog service stopped and removed successfully" bold
     echo
@@ -1116,22 +1178,42 @@ get_running_core_version() {
     fi
 }
 
-show_runtime_status() {
-    local system_arch core_package
+get_main_core_version() {
+    printf '%s\n' "$MAIN_CORE_VERSION"
+}
+
+initialize_main_core_version() {
+    MAIN_CORE_VERSION=$(get_binary_version_number /root/easytier/easytier-core 2>/dev/null || true)
+    MAIN_CORE_VERSION=${MAIN_CORE_VERSION:-not-installed}
+}
+
+show_diagnostics() {
+    local system_arch core_package service_pid restart_count
 
     system_arch=$(uname -m)
     core_package=$(resolve_core_arch_directory "$system_arch" 2>/dev/null || printf 'unsupported')
-    colorize cyan "System Architecture: $system_arch" bold
-    colorize cyan "Core Package: $core_package" bold
-    colorize cyan "Core status:" bold
-    check_core_status
-    colorize cyan "Installed Core: $(get_installed_core_version)" bold
-    colorize cyan "Running Core: $(get_running_core_version)" bold
-    colorize cyan "Service Status: $(get_service_status)" bold
+    service_pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null || printf '0')
+    restart_count=$(systemctl show -p NRestarts --value easymesh.service 2>/dev/null || printf 'unknown')
+    clear
+    colorize cyan "EasyMesh Diagnostics" bold
+    printf 'System architecture: %s\n' "$system_arch"
+    printf 'Architecture package: %s\n' "$core_package"
+    printf 'Default core version: %s\n' "$DEFAULT_CORE_VERSION"
+    printf 'Requested core version: %s\n' "$CORE_VERSION"
+    printf 'Installed core version: %s\n' "$(get_installed_core_version)"
+    printf 'Running core version: %s\n' "$(get_running_core_version)"
+    printf 'Service status: %s\n' "$(get_service_status)"
+    printf 'Service PID: %s\n' "${service_pid:-0}"
+    printf 'Core executable: /root/easytier/easytier-core\n'
+    printf 'CLI executable: %s\n' "$EASY_CLIENT"
+    printf 'Service file: %s\n' "$SERVICE_FILE"
+    printf 'Service restart count: %s\n' "${restart_count:-unknown}"
+    press_key
 }
 
 # New function to remove core
 remove_easymesh_core(){
+	local confirm
 	echo
 	
 	if [[ ! -d '/root/easytier' ]]; then
@@ -1139,9 +1221,15 @@ remove_easymesh_core(){
 		 sleep 2
 		 return 1
 	fi
-	
-	
+	colorize yellow "This will permanently delete /root/easytier and both EasyTier binaries." bold
+	read -r -p "Remove the EasyMesh core? [y/N] " confirm || confirm=""
+	[[ "$confirm" =~ ^[Yy]$ ]] || {
+		colorize yellow "Core removal cancelled." bold
+		return 0
+	}
+
 	rm -rf /root/easytier &> /dev/null
+	MAIN_CORE_VERSION="not-installed"
 	
 	colorize green "	Behify EasyMesh core deleted successfully." bold
 	sleep 2
@@ -1178,14 +1266,12 @@ display_menu() {
     print_box_line "Behify EasyMesh"
     print_box_line "VPN Network Solution"
     printf "   +--------------------------------------+\n"
-    print_box_line "Default Core: $DEFAULT_CORE_VERSION"
-    print_box_line "Selected Core: $CORE_VERSION"
+    print_box_line "Core: $(get_main_core_version)"
+    print_box_line "Service: $(get_service_status)"
     print_box_line "Telegram: @behify1"
     print_box_line "Channel: BehifyVPN"
     print_box_line "Build: Behify private"
     printf "   +--------------------------------------+\n"
-    show_runtime_status
-
     echo ''
     colorize cyan "Menu options:" bold
     colorize green "	[1] Connect to the Mesh Network" bold 
@@ -1200,6 +1286,7 @@ display_menu() {
     colorize red "	[10] Remove Service" 
     colorize magenta "	[11] Remove Core" 
     colorize cyan "	[12] Relay / Port Routing"
+    colorize cyan "	[13] Diagnostics"
     
     echo -e "	[0] Exit" 
     echo ''
@@ -1224,12 +1311,14 @@ read_option() {
         10) remove_easymesh_service ;;
         11) remove_easymesh_core ;;
         12) relay_port_routing ;;
+        13) show_diagnostics ;;
         0) exit 0 ;;
         *) colorize red "	Invalid option!" bold && sleep 1 ;;
     esac
 }
 
 # Main script
+initialize_main_core_version
 while true
 do
     display_menu

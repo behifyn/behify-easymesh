@@ -37,6 +37,8 @@ sudo EASYMESH_OFFLINE=1 easymesh
 sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
 ```
 
+Re-running `install.sh` updates the packaged scripts, documentation, and local EasyTier cores without downloading Xray or changing the running EasyMesh service. Existing relay definitions, generated relay configuration, isolated Xray releases, and `behify-relay.service` state are preserved.
+
 ## Architecture-safe core selection
 
 Local core packages are selected from the detected system architecture:
@@ -54,7 +56,9 @@ Menu option `[12] Relay / Port Routing` provides an optional Dokodemo-Door relay
 
 Xray is downloaded only after explicit confirmation. The manager accepts only a stable, non-draft, non-prerelease release from the official `XTLS/Xray-core` GitHub repository. The archive must include an official GitHub SHA-256 digest, and checksum or archive-path validation failure stops installation before the binary is executed or activated.
 
-Relay modes are `tcp`, `udp`, and `both`. For example, a UDP relay can listen on public port `443` and forward it to EasyTier mesh address `10.144.144.1` port `443`:
+Relay modes are `tcp`, `udp`, and `both`. TCP is the default and is appropriate for normal TCP-based VLESS, VMess, Trojan, Reality, WebSocket, and similar transports. UDP performs direct UDP forwarding only. `both` creates separate TCP and UDP listeners on the same numerical port; it is not required merely because an application carries UDP inside a TCP connection.
+
+For example, a UDP relay can listen on public port `443` and forward it to EasyTier mesh address `10.144.144.1` port `443`:
 
 ```text
 Name: mesh-udp-443
@@ -78,6 +82,8 @@ TCP and UDP conflicts are checked separately with `ss`. Sensitive ports such as 
 
 Every configuration change backs up the current relay files, generates and validates temporary JSON, tests it with the dedicated Xray binary, and then atomically installs it. Only `behify-relay.service` is restarted. If validation, installation, or service startup fails, the previous relay configuration is restored automatically. The relay service uses `Wants=easymesh.service`; it does not contain or modify mesh IP, secret, peer, or `ExecStart` configuration.
 
+The Add Relay flow shows a confirmation summary before committing anything, explains and asks before installing the isolated Xray, verifies every requested TCP/UDP listening socket, and prints an explicit success, cancellation, validation failure, or rollback result. The relay dashboard uses local state only; GitHub is contacted only after selecting Xray installation or update.
+
 When the last enabled relay is removed, the validated empty configuration is retained and `behify-relay.service` is stopped and disabled. The relay manager remains installed so another relay can be added later.
 
 Check installed/running core version:
@@ -86,6 +92,10 @@ Check installed/running core version:
 /root/easytier/easytier-core --version
 PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
 ```
+
+The main menu keeps runtime checks concise (`Core` and `Service`). Menu option `[13] Diagnostics` shows architecture, requested/default/installed/running versions, PID, executable paths, and restart count. Peer, route, and peer-center views use a wide terminal layout and add `--no-trunc` only when the installed `easytier-cli` supports it, preserving compatibility with v2.0.3.
+
+Core, service, and relay-component removals require an explicit `y` confirmation. Watchdog destinations must be valid IPv4 or IPv6 addresses; latency thresholds and check intervals are range-checked before the root-owned monitor script is written.
 
 Smoke/offline test package:
 
