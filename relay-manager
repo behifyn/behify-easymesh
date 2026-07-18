@@ -14,6 +14,11 @@ XRAY_RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 RELAY_TEMP_DIRS=()
 RELAY_TEMP_FILES=()
 RELAY_APPLY_FAILURE=""
+RELAY_SOURCE_ONLY=0
+
+if [[ "${BEHIFY_RELAY_SOURCE_ONLY:-0}" == "1" && "${BASH_SOURCE[0]}" != "$0" ]]; then
+    RELAY_SOURCE_ONLY=1
+fi
 
 relay_color() {
     local code="$1"
@@ -29,7 +34,7 @@ relay_box_line() {
     printf '| %-36s |\n' "$1"
 }
 
-if [[ $EUID -ne 0 ]]; then
+if [[ "$RELAY_SOURCE_ONLY" != "1" && $EUID -ne 0 ]]; then
     printf 'Relay management must be run as root.\n' >&2
     exit 1
 fi
@@ -61,6 +66,41 @@ safe_remove_temp_dir() {
     rm -rf -- "$resolved"
 }
 
+assert_relay_temp_dir() {
+    local candidate_dir="$1"
+    local resolved_temp_root resolved_candidate
+
+    [[ -n "$candidate_dir" && "$candidate_dir" != "/" && -d "$candidate_dir" ]] || {
+        relay_error "Internal error: temporary directory output is empty or invalid."
+        return 1
+    }
+    resolved_temp_root=$(readlink -f "${TMPDIR:-/tmp}") || {
+        relay_error "Internal error: could not resolve the temporary root."
+        return 1
+    }
+    resolved_candidate=$(readlink -f "$candidate_dir") || {
+        relay_error "Internal error: could not resolve temporary directory $candidate_dir."
+        return 1
+    }
+    [[ "$resolved_candidate" == "$resolved_temp_root"/* ]] || {
+        relay_error "Internal error: temporary directory is outside $resolved_temp_root: $resolved_candidate"
+        return 1
+    }
+}
+
+assert_relay_temp_file() {
+    local candidate_file="$1"
+
+    [[ -n "$candidate_file" && "$candidate_file" != /*/../* && -f "$candidate_file" ]] || {
+        relay_error "Internal error: temporary file output is empty or invalid."
+        return 1
+    }
+    if [[ "$candidate_file" == /* && "${candidate_file#/}" != */* ]]; then
+        relay_error "Internal error: refusing root-level temporary file: $candidate_file"
+        return 1
+    fi
+}
+
 safe_remove_managed_tree() {
     local managed_path="$1"
 
@@ -88,25 +128,55 @@ cleanup_relay_temp_dirs() {
 
 make_relay_temp_dir() {
     local output_variable="$1"
-    local temp_dir
+    local created_dir
 
-    temp_dir=$(mktemp -d) || return 1
-    chmod 0700 "$temp_dir" || {
-        safe_remove_temp_dir "$temp_dir"
+    [[ "$output_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+        relay_error "Internal error: invalid temporary-directory output variable."
         return 1
     }
-    RELAY_TEMP_DIRS+=("$temp_dir")
-    printf -v "$output_variable" '%s' "$temp_dir"
+    case "$output_variable" in
+        output_variable|created_dir)
+            relay_error "Internal error: unsafe temporary-directory output variable: $output_variable"
+            return 1
+            ;;
+    esac
+    created_dir=$(mktemp -d) || return 1
+    assert_relay_temp_dir "$created_dir" || return 1
+    chmod 0700 "$created_dir" || {
+        safe_remove_temp_dir "$created_dir"
+        return 1
+    }
+    RELAY_TEMP_DIRS+=("$created_dir")
+    printf -v "$output_variable" '%s' "$created_dir" || return 1
+    [[ -n "${!output_variable:-}" ]] && assert_relay_temp_dir "${!output_variable}" || {
+        relay_error "Internal error: temporary directory was not assigned to $output_variable."
+        return 1
+    }
 }
 
 make_relay_temp_file() {
     local output_variable="$1"
     local template="$2"
-    local temp_file
+    local created_file
 
-    temp_file=$(mktemp "$template") || return 1
-    RELAY_TEMP_FILES+=("$temp_file")
-    printf -v "$output_variable" '%s' "$temp_file"
+    [[ "$output_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+        relay_error "Internal error: invalid temporary-file output variable."
+        return 1
+    }
+    case "$output_variable" in
+        output_variable|template|created_file)
+            relay_error "Internal error: unsafe temporary-file output variable: $output_variable"
+            return 1
+            ;;
+    esac
+    created_file=$(mktemp "$template") || return 1
+    assert_relay_temp_file "$created_file" || return 1
+    RELAY_TEMP_FILES+=("$created_file")
+    printf -v "$output_variable" '%s' "$created_file" || return 1
+    [[ -n "${!output_variable:-}" ]] && assert_relay_temp_file "${!output_variable}" || {
+        relay_error "Internal error: temporary file was not assigned to $output_variable."
+        return 1
+    }
 }
 
 trap cleanup_relay_temp_dirs EXIT
@@ -497,9 +567,20 @@ apply_relay_definitions() {
     local candidate_definitions="$1"
     local temp_dir xray_temp_dir backup_dir timestamp staged_relays staged_config
     local confirm old_xray_target validation_binary relay_count
+    local resolved_candidate resolved_destination resolved_temp_root
     local service_was_active=0 service_was_enabled=0 service_file_existed=0 xray_activated=0
 
     RELAY_APPLY_FAILURE="transaction_failed"
+    resolved_temp_root=$(readlink -f "${TMPDIR:-/tmp}") || return 1
+    resolved_candidate=$(readlink -f "$candidate_definitions") || {
+        relay_error "Internal error: candidate relay definitions could not be resolved."
+        return 1
+    }
+    if [[ "$resolved_candidate" == "/relays.json" || "$resolved_candidate" == "/config.json" || \
+          "$resolved_candidate" != "$resolved_temp_root"/* ]]; then
+        relay_error "Internal error: candidate relay definitions are outside the temporary root: $resolved_candidate"
+        return 1
+    fi
     if [[ ! -x "$RELAY_XRAY_BINARY" ]] && ! resolve_xray_asset >/dev/null; then
         relay_error "Unsupported Xray architecture: $(uname -m)"
         return 1
@@ -525,7 +606,13 @@ apply_relay_definitions() {
     fi
 
     make_relay_temp_dir temp_dir || return 1
-    cp "$candidate_definitions" "$temp_dir/relays.json" || {
+    resolved_destination="$(readlink -f "$temp_dir")/relays.json"
+    if [[ "$resolved_candidate" == "$resolved_destination" ]]; then
+        relay_error "Internal error: candidate relay definitions source and destination are the same file."
+        safe_remove_temp_dir "$temp_dir"
+        return 1
+    fi
+    cp -- "$resolved_candidate" "$resolved_destination" || {
         safe_remove_temp_dir "$temp_dir"
         return 1
     }
@@ -1151,6 +1238,12 @@ relay_diagnostics() {
     else
         printf 'Service: not installed\n'
     fi
+    if [[ -e /relays.json ]]; then
+        printf 'Warning: unexpected /relays.json exists. It was not removed because ownership cannot be proven.\n'
+    fi
+    if [[ -e /config.json ]]; then
+        printf 'Warning: unexpected /config.json exists. It was not removed because ownership cannot be proven.\n'
+    fi
 }
 
 get_installed_xray_version() {
@@ -1391,6 +1484,10 @@ display_relay_menu() {
         ' 10. Remove Relay Component' \
         '  0. Back'
 }
+
+if [[ "$RELAY_SOURCE_ONLY" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 while true; do
     display_relay_menu

@@ -20,4 +20,6 @@ grep -Fq 'easy_client_supports_no_trunc' easymesh
 grep -Fq 'verify_relay_sockets' relay-manager
 grep -Fq 'relay_service_is_owned' relay-manager
 
+bash tests/temp-path-regression.sh
+
 printf 'Static smoke checks passed.\n'
