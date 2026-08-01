@@ -489,7 +489,6 @@ generate_random_secret() {
 EASY_CLIENT='/root/easytier/easytier-cli'
 SERVICE_FILE="/etc/systemd/system/easymesh.service"
 MAIN_CORE_VERSION=""
-EASY_CLIENT_NO_TRUNC=""
     
 connect_network_pool(){
 	clear
@@ -654,29 +653,31 @@ is_mesh_cli_ready() {
     return 0
 }
 
-easy_client_supports_no_trunc() {
-    if [[ -z "$EASY_CLIENT_NO_TRUNC" ]]; then
-        if "$EASY_CLIENT" --help 2>&1 | grep -q -- '--no-trunc'; then
-            EASY_CLIENT_NO_TRUNC="yes"
-        else
-            EASY_CLIENT_NO_TRUNC="no"
-        fi
+get_watch_no_wrap_option() {
+    local watch_help
+
+    watch_help=$(watch --help 2>&1) || true
+    if grep -Eq -- '(^|[[:space:]])-w([,[:space:]]|$)' <<< "$watch_help"; then
+        printf '%s\n' '-w'
+    elif grep -Fq -- '--no-wrap' <<< "$watch_help"; then
+        printf '%s\n' '--no-wrap'
+    else
+        return 1
     fi
-    [[ "$EASY_CLIENT_NO_TRUNC" == "yes" ]]
 }
 
 watch_mesh_view() {
     local view="$1"
-    local client_command quoted_client
+    local client_command no_wrap_option quoted_client
+    local -a watch_options=(-n1 -t)
 
     printf -v quoted_client '%q' "$EASY_CLIENT"
-    if easy_client_supports_no_trunc; then
-        client_command="COLUMNS=220 $quoted_client --no-trunc $view"
-    else
-        client_command="COLUMNS=220 $quoted_client $view"
+    client_command="$quoted_client $view"
+    if [[ "$view" == "route" ]] && no_wrap_option=$(get_watch_no_wrap_option); then
+        watch_options+=("$no_wrap_option")
     fi
     colorize yellow "Output is refreshed every second. Press Ctrl+C to return to the menu." bold
-    watch -n1 -- "$client_command"
+    watch "${watch_options[@]}" -- "$client_command"
 }
 
 display_peers()
