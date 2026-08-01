@@ -12,7 +12,7 @@ bash -n install.sh
 grep -Fqx 'DEFAULT_CORE_VERSION="v2.0.3"' easymesh
 grep -Fqx 'SERVICE_FILE="/etc/systemd/system/easymesh.service"' easymesh
 grep -Fqx 'RELAY_SERVICE_NAME="behify-relay.service"' relay-manager
-grep -Fqx 'RELAY_XRAY_ROOT="/opt/behify-easymesh/relay/xray"' relay-manager
+grep -Fqx 'RELAY_BINARY="$RELAY_BIN_DIR/behify-relayd"' relay-manager
 grep -Fqx 'INSTALL_DIR="/opt/behify-easymesh"' install.sh
 grep -Fqx 'COMMAND_PATH="/usr/local/bin/easymesh"' install.sh
 
@@ -21,5 +21,6 @@ grep -Fq 'verify_relay_sockets' relay-manager
 grep -Fq 'relay_service_is_owned' relay-manager
 
 bash tests/temp-path-regression.sh
+bash tests/neutral-runtime-regression.sh
 
 printf 'Static smoke checks passed.\n'

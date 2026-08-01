@@ -2,18 +2,26 @@
 
 set -o pipefail
 
-RELAY_XRAY_ROOT="/opt/behify-easymesh/relay/xray"
-RELAY_XRAY_CURRENT="$RELAY_XRAY_ROOT/current"
-RELAY_XRAY_BINARY="$RELAY_XRAY_CURRENT/xray"
+RELAY_ROOT="/opt/behify-easymesh/relay"
+RELAY_BIN_DIR="$RELAY_ROOT/bin"
+RELAY_BINARY="$RELAY_BIN_DIR/behify-relayd"
+RELAY_RELEASES_DIR="$RELAY_ROOT/releases"
+RELAY_BACKUPS_DIR="$RELAY_ROOT/backups"
+RELAY_LEGACY_XRAY_ROOT="$RELAY_ROOT/xray"
+RELAY_LEGACY_XRAY_CURRENT="$RELAY_LEGACY_XRAY_ROOT/current"
+RELAY_LEGACY_XRAY_BINARY="$RELAY_LEGACY_XRAY_CURRENT/xray"
 RELAY_CONFIG_DIR="/etc/behify-easymesh/relay"
 RELAY_DEFINITIONS="$RELAY_CONFIG_DIR/relays.json"
 RELAY_CONFIG="$RELAY_CONFIG_DIR/config.json"
 RELAY_SERVICE_FILE="/etc/systemd/system/behify-relay.service"
 RELAY_SERVICE_NAME="behify-relay.service"
+RELAY_SERVICE_DROPIN_DIR="/etc/systemd/system/behify-relay.service.d"
+RELAY_KNOWN_NEUTRAL_DROPIN="$RELAY_SERVICE_DROPIN_DIR/10-neutral-binary.conf"
 XRAY_RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 RELAY_TEMP_DIRS=()
 RELAY_TEMP_FILES=()
 RELAY_APPLY_FAILURE=""
+RELAY_VALIDATED_VERSION=""
 RELAY_SOURCE_ONLY=0
 
 if [[ "${BEHIFY_RELAY_SOURCE_ONLY:-0}" == "1" && "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -48,8 +56,15 @@ relay_error() {
 }
 
 relay_service_is_owned() {
+    [[ -f "$RELAY_SERVICE_FILE" ]] && {
+        grep -Fqx "ExecStart=$RELAY_BINARY run -config $RELAY_CONFIG" "$RELAY_SERVICE_FILE" ||
+            grep -Fqx "ExecStart=$RELAY_LEGACY_XRAY_BINARY run -config $RELAY_CONFIG" "$RELAY_SERVICE_FILE"
+    }
+}
+
+relay_service_uses_neutral_runtime() {
     [[ -f "$RELAY_SERVICE_FILE" ]] &&
-        grep -Fqx "ExecStart=$RELAY_XRAY_BINARY run -config $RELAY_CONFIG" "$RELAY_SERVICE_FILE"
+        grep -Fqx "ExecStart=$RELAY_BINARY run -config $RELAY_CONFIG" "$RELAY_SERVICE_FILE"
 }
 
 safe_remove_temp_dir() {
@@ -105,7 +120,9 @@ safe_remove_managed_tree() {
     local managed_path="$1"
 
     case "$managed_path" in
-        /opt/behify-easymesh/relay/xray|/etc/behify-easymesh/relay) ;;
+        /opt/behify-easymesh/relay/bin|/opt/behify-easymesh/relay/releases|\
+        /opt/behify-easymesh/relay/backups|/opt/behify-easymesh/relay/xray|\
+        /etc/behify-easymesh/relay) ;;
         *)
             relay_error "Refusing to remove unexpected managed path: ${managed_path:-<empty>}"
             return 1
@@ -233,7 +250,7 @@ ensure_relay_dependencies() {
 ensure_relay_storage() {
     local staged_definitions
 
-    install -d -m 0755 "$RELAY_CONFIG_DIR" "$RELAY_XRAY_ROOT/releases" || {
+    install -d -m 0755 "$RELAY_CONFIG_DIR" "$RELAY_BIN_DIR" "$RELAY_RELEASES_DIR" "$RELAY_BACKUPS_DIR" || {
         relay_error "Could not create the isolated relay storage directories."
         return 1
     }
@@ -306,14 +323,15 @@ fetch_latest_xray_release() {
     fi
 }
 
-switch_xray_current() {
-    local target="$1"
+switch_relay_runtime() {
+    local target_binary="$1"
     local new_link
 
-    make_relay_temp_file new_link "$RELAY_XRAY_ROOT/.current.XXXXXX" || return 1
+    install -d -m 0755 "$RELAY_BIN_DIR" || return 1
+    make_relay_temp_file new_link "$RELAY_BIN_DIR/.behify-relayd.XXXXXX" || return 1
     rm -f "$new_link" || return 1
-    ln -s "$target" "$new_link" || return 1
-    if ! mv -Tf "$new_link" "$RELAY_XRAY_CURRENT"; then
+    ln -s "$target_binary" "$new_link" || return 1
+    if ! mv -Tf "$new_link" "$RELAY_BINARY"; then
         rm -f "$new_link"
         return 1
     fi
@@ -382,13 +400,17 @@ download_verified_xray_candidate() {
         relay_error "Could not extract the expected Xray executable."
         return 1
     fi
-    chmod 0700 "$temp_dir/unpacked/xray" || return 1
-    if ! "$temp_dir/unpacked/xray" version >/dev/null 2>&1; then
-        relay_error "Verified Xray binary cannot execute on $(uname -m)."
+    if ! mv "$temp_dir/unpacked/xray" "$temp_dir/unpacked/behify-relayd" ||
+       ! chmod 0700 "$temp_dir/unpacked/behify-relayd"; then
+        relay_error "Could not stage the verified Xray asset under the neutral runtime name."
+        return 1
+    fi
+    if ! validate_relay_runtime_candidate "$temp_dir/unpacked/behify-relayd" temporary ""; then
+        relay_error "Verified Xray binary validation failed on $(uname -m)."
         return 1
     fi
 
-    XRAY_CANDIDATE_BINARY="$temp_dir/unpacked/xray"
+    XRAY_CANDIDATE_BINARY="$temp_dir/unpacked/behify-relayd"
 }
 
 activate_xray_candidate() {
@@ -396,12 +418,25 @@ activate_xray_candidate() {
     local candidate_binary="$2"
     local release_dir staged_binary
 
-    release_dir="$RELAY_XRAY_ROOT/releases/${version#v}-$(date +%Y%m%d-%H%M%S)-$$"
+    [[ "$(basename "$candidate_binary")" == "behify-relayd" ]] || {
+        relay_error "Refusing to activate a relay candidate without the neutral runtime name."
+        return 1
+    }
+    release_dir="$RELAY_RELEASES_DIR/${version#v}-$(date +%Y%m%d-%H%M%S)-$$"
     install -d -m 0755 "$release_dir" || return 1
-    make_relay_temp_file staged_binary "$release_dir/.xray.XXXXXX" || return 1
-    if ! install -m 0755 "$candidate_binary" "$staged_binary" || \
-       ! mv -f "$staged_binary" "$release_dir/xray" || \
-       ! switch_xray_current "$release_dir"; then
+    make_relay_temp_file staged_binary "$release_dir/.behify-relayd.XXXXXX" || return 1
+    if ! install -m 0755 "$candidate_binary" "$staged_binary"; then
+        relay_error "Could not stage the isolated relay runtime for activation."
+        rm -f "$staged_binary"
+        return 1
+    fi
+    if ! verify_relay_copy_digest "$candidate_binary" "$staged_binary"; then
+        rm -f "$staged_binary"
+        return 1
+    fi
+    if ! mv -f "$staged_binary" "$release_dir/behify-relayd" || \
+       ! validate_relay_runtime_candidate "$release_dir/behify-relayd" release "" || \
+       ! switch_relay_runtime "$release_dir/behify-relayd"; then
         rm -f "$staged_binary"
         relay_error "Could not atomically activate the isolated Xray release."
         return 1
@@ -421,7 +456,7 @@ ensure_relay_service() {
         '' \
         '[Service]' \
         'Type=simple' \
-        "ExecStart=$RELAY_XRAY_BINARY run -config $RELAY_CONFIG" \
+        "ExecStart=$RELAY_BINARY run -config $RELAY_CONFIG" \
         'Restart=on-failure' \
         'RestartSec=3' \
         'NoNewPrivileges=true' \
@@ -453,6 +488,403 @@ ensure_relay_service() {
         relay_error "systemctl daemon-reload failed after relay unit update."
         return 1
     }
+}
+
+parse_relay_runtime_version_output() {
+    local version_output="$1"
+    local first_line
+
+    first_line=${version_output%%$'\n'*}
+    if [[ "$first_line" =~ ^Xray[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]|$) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+get_relay_runtime_version() {
+    local runtime_binary="$1"
+    local version_output
+
+    [[ -x "$runtime_binary" ]] || return 1
+    version_output=$("$runtime_binary" version 2>&1) || return 1
+    parse_relay_runtime_version_output "$version_output"
+}
+
+relay_runtime_is_executable() {
+    [[ -x "$1" ]]
+}
+
+relay_runtime_is_symlink() {
+    [[ -L "$1" ]]
+}
+
+relay_runtime_path_is_safe() {
+    local runtime_binary="$1"
+    local path_scope="$2"
+    local resolved_binary resolved_root resolved_tracked runtime_owner link_owner
+    local tracked_temp tracked_match=0
+
+    if [[ "$(basename "$runtime_binary")" != "behify-relayd" ]]; then
+        relay_error "Invalid runtime basename; the executed candidate must be named behify-relayd."
+        return 1
+    fi
+    if [[ ! -f "$runtime_binary" ]]; then
+        relay_error "Neutral relay candidate is not a regular file: $runtime_binary"
+        return 1
+    fi
+    if ! relay_runtime_is_executable "$runtime_binary"; then
+        relay_error "Executable permission validation failed for the neutral relay candidate."
+        return 1
+    fi
+    resolved_binary=$(readlink -f "$runtime_binary") || {
+        relay_error "Unsafe staging path; the neutral relay candidate could not be resolved."
+        return 1
+    }
+    if [[ "$(basename "$resolved_binary")" != "behify-relayd" ]]; then
+        relay_error "Invalid runtime basename after canonical-path resolution."
+        return 1
+    fi
+
+    case "$path_scope" in
+        temporary)
+            if relay_runtime_is_symlink "$runtime_binary"; then
+                relay_error "Unsafe staging path; temporary relay candidates must not be symlinks."
+                return 1
+            fi
+            resolved_root=$(readlink -f "${TMPDIR:-/tmp}") || {
+                relay_error "Unsafe staging path; the temporary root could not be resolved."
+                return 1
+            }
+            [[ "$resolved_binary" == "$resolved_root"/* ]] || {
+                relay_error "Unsafe staging path; the relay candidate is outside the temporary root."
+                return 1
+            }
+            for tracked_temp in "${RELAY_TEMP_DIRS[@]}"; do
+                resolved_tracked=$(readlink -f "$tracked_temp" 2>/dev/null) || continue
+                if [[ "$resolved_binary" == "$resolved_tracked"/* ]]; then
+                    tracked_match=1
+                    break
+                fi
+            done
+            [[ "$tracked_match" == "1" ]] || {
+                relay_error "Unsafe staging path; the relay candidate is outside manager-created temporary directories."
+                return 1
+            }
+            ;;
+        release)
+            if relay_runtime_is_symlink "$runtime_binary"; then
+                relay_error "Unsafe release path; an activated relay release must not be a symlink."
+                return 1
+            fi
+            resolved_root=$(readlink -f "$RELAY_RELEASES_DIR") || {
+                relay_error "Unsafe release path; the managed releases directory could not be resolved."
+                return 1
+            }
+            [[ "$resolved_binary" == "$resolved_root"/* ]] || {
+                relay_error "Unsafe release path; the relay candidate is outside the managed releases directory."
+                return 1
+            }
+            ;;
+        managed)
+            [[ "$runtime_binary" == "$RELAY_BINARY" ]] || {
+                relay_error "Unsafe managed path; only the configured neutral relay runtime may be reused."
+                return 1
+            }
+            if relay_runtime_is_symlink "$runtime_binary"; then
+                resolved_root=$(readlink -f "$RELAY_RELEASES_DIR") || {
+                    relay_error "Unsafe managed path; the managed releases directory could not be resolved."
+                    return 1
+                }
+                [[ "$resolved_binary" == "$resolved_root"/* ]] || {
+                    relay_error "Unsafe managed path; the neutral runtime symlink points outside managed releases."
+                    return 1
+                }
+            fi
+            ;;
+        *)
+            relay_error "Internal error: unknown relay runtime path scope."
+            return 1
+            ;;
+    esac
+
+    runtime_owner=$(stat -Lc '%u' "$runtime_binary" 2>/dev/null) || {
+        relay_error "Runtime ownership validation failed for the neutral relay candidate."
+        return 1
+    }
+    [[ "$runtime_owner" == "$EUID" ]] || {
+        relay_error "Runtime ownership validation failed for the neutral relay candidate."
+        return 1
+    }
+    if relay_runtime_is_symlink "$runtime_binary"; then
+        link_owner=$(stat -c '%u' "$runtime_binary" 2>/dev/null) || {
+            relay_error "Runtime symlink ownership validation failed for the neutral relay candidate."
+            return 1
+        }
+        [[ "$link_owner" == "$EUID" ]] || {
+            relay_error "Runtime symlink ownership validation failed for the neutral relay candidate."
+            return 1
+        }
+    fi
+}
+
+validate_relay_runtime_candidate() {
+    local runtime_binary="$1"
+    local path_scope="$2"
+    local config_path="${3:-}"
+    local version_output version
+
+    RELAY_VALIDATED_VERSION=""
+    relay_runtime_path_is_safe "$runtime_binary" "$path_scope" || return 1
+    if ! version_output=$("$runtime_binary" version 2>&1); then
+        relay_error "Version execution failed for the neutral relay candidate."
+        return 1
+    fi
+    version=$(parse_relay_runtime_version_output "$version_output") || {
+        relay_error "Version parsing failed; the candidate did not return recognized Xray version output."
+        return 1
+    }
+    if [[ -n "$config_path" ]] && \
+       ! "$runtime_binary" run -test -config "$config_path" >/dev/null 2>&1; then
+        relay_error "Configuration validation failed for the neutral relay candidate."
+        return 1
+    fi
+    RELAY_VALIDATED_VERSION="$version"
+}
+
+verify_relay_copy_digest() {
+    local source_file="$1"
+    local staged_file="$2"
+    local source_digest staged_digest
+
+    source_digest=$(sha256sum "$source_file" 2>/dev/null) || {
+        relay_error "Source and staged digest comparison failed."
+        return 1
+    }
+    staged_digest=$(sha256sum "$staged_file" 2>/dev/null) || {
+        relay_error "Source and staged digest comparison failed."
+        return 1
+    }
+    source_digest=${source_digest%% *}
+    staged_digest=${staged_digest%% *}
+    [[ "$source_digest" == "$staged_digest" ]] || {
+        relay_error "Source and staged digest mismatch."
+        return 1
+    }
+}
+
+legacy_relay_source_is_safe() {
+    local resolved_source resolved_legacy_root source_owner
+
+    [[ -f "$RELAY_LEGACY_XRAY_BINARY" ]] || {
+        relay_error "Unsafe legacy source path; the isolated Xray source is not a regular file."
+        return 1
+    }
+    relay_runtime_is_executable "$RELAY_LEGACY_XRAY_BINARY" || {
+        relay_error "Executable permission validation failed for the legacy isolated Xray source."
+        return 1
+    }
+    resolved_source=$(readlink -f "$RELAY_LEGACY_XRAY_BINARY") || {
+        relay_error "Unsafe legacy source path; the isolated Xray source could not be resolved."
+        return 1
+    }
+    resolved_legacy_root=$(readlink -f "$RELAY_LEGACY_XRAY_ROOT") || {
+        relay_error "Unsafe legacy source path; the isolated Xray root could not be resolved."
+        return 1
+    }
+    [[ "$resolved_source" == "$resolved_legacy_root"/* ]] || {
+        relay_error "Unsafe legacy source path; the isolated Xray source resolves outside Behify relay storage."
+        return 1
+    }
+    [[ "$(basename "$resolved_source")" == "xray" ]] || {
+        relay_error "Invalid legacy source basename; expected the isolated xray release file."
+        return 1
+    }
+    source_owner=$(stat -Lc '%u' "$RELAY_LEGACY_XRAY_BINARY" 2>/dev/null) || {
+        relay_error "Legacy source ownership validation failed."
+        return 1
+    }
+    [[ "$source_owner" == "$EUID" ]] || {
+        relay_error "Legacy source ownership validation failed."
+        return 1
+    }
+}
+
+known_neutral_dropin_matches() {
+    [[ -f "$RELAY_KNOWN_NEUTRAL_DROPIN" ]] || return 1
+    cmp -s "$RELAY_KNOWN_NEUTRAL_DROPIN" <(printf '%s\n' \
+        '[Service]' \
+        'ExecStart=' \
+        "ExecStart=$RELAY_BINARY run -config $RELAY_CONFIG")
+}
+
+backup_relay_runtime_state() {
+    local backup_dir="$1"
+
+    mkdir -p "$backup_dir" && chmod 0700 "$backup_dir" || return 1
+    if [[ -L "$RELAY_BINARY" ]]; then
+        readlink "$RELAY_BINARY" > "$backup_dir/runtime-link" || return 1
+    elif [[ -f "$RELAY_BINARY" ]]; then
+        install -m 0755 "$RELAY_BINARY" "$backup_dir/behify-relayd" || return 1
+    else
+        : > "$backup_dir/runtime-missing" || return 1
+    fi
+}
+
+restore_relay_runtime_state() {
+    local backup_dir="$1"
+
+    rm -f "$RELAY_BINARY" || return 1
+    install -d -m 0755 "$RELAY_BIN_DIR" || return 1
+    if [[ -f "$backup_dir/runtime-link" ]]; then
+        ln -s "$(cat "$backup_dir/runtime-link")" "$RELAY_BINARY" || return 1
+    elif [[ -f "$backup_dir/behify-relayd" ]]; then
+        install -m 0755 "$backup_dir/behify-relayd" "$RELAY_BINARY" || return 1
+    elif [[ ! -f "$backup_dir/runtime-missing" ]]; then
+        return 1
+    fi
+}
+
+verify_relay_process_name() {
+    local pid executable
+
+    pid=$(systemctl show -p MainPID --value "$RELAY_SERVICE_NAME" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" != "0" ]] || return 1
+    executable=$(readlink -f "/proc/$pid/exe" 2>/dev/null) || return 1
+    [[ "$(basename "$executable")" == "behify-relayd" ]]
+}
+
+rollback_neutral_runtime_migration() {
+    local backup_dir="$1"
+    local service_was_active="$2"
+    local unit_existed="$3"
+    local dropin_was_removed="$4"
+    local rollback_failed=0
+
+    restore_relay_runtime_state "$backup_dir/runtime" || rollback_failed=1
+    if [[ "$unit_existed" == "1" ]]; then
+        install -m 0644 "$backup_dir/behify-relay.service" "$RELAY_SERVICE_FILE" || rollback_failed=1
+    else
+        rm -f "$RELAY_SERVICE_FILE" || rollback_failed=1
+    fi
+    if [[ "$dropin_was_removed" == "1" ]]; then
+        install -d -m 0755 "$RELAY_SERVICE_DROPIN_DIR" || rollback_failed=1
+        install -m 0644 "$backup_dir/10-neutral-binary.conf" "$RELAY_KNOWN_NEUTRAL_DROPIN" || rollback_failed=1
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || rollback_failed=1
+    if [[ "$service_was_active" == "1" ]]; then
+        systemctl restart "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || rollback_failed=1
+    else
+        systemctl stop "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+    [[ "$rollback_failed" == "0" ]]
+}
+
+migrate_legacy_relay_runtime() {
+    local temp_dir backup_dir candidate_binary version timestamp
+    local service_was_active=0 service_was_enabled=0 unit_existed=0
+    local runtime_needs_activation=0 dropin_was_removed=0 migration_failed=0
+    local neutral_runtime_present=0
+
+    [[ -e "$RELAY_BINARY" || -L "$RELAY_BINARY" ]] && neutral_runtime_present=1
+    if [[ "$neutral_runtime_present" == "1" ]] && \
+       validate_relay_runtime_candidate "$RELAY_BINARY" managed ""; then
+        candidate_binary="$RELAY_BINARY"
+        version="$RELAY_VALIDATED_VERSION"
+    elif [[ -x "$RELAY_LEGACY_XRAY_BINARY" ]]; then
+        legacy_relay_source_is_safe || return 1
+        make_relay_temp_dir temp_dir || return 1
+        candidate_binary="$temp_dir/behify-relayd"
+        install -m 0755 "$RELAY_LEGACY_XRAY_BINARY" "$candidate_binary" || {
+            relay_error "Staged copy failed for the existing isolated Xray."
+            return 1
+        }
+        verify_relay_copy_digest "$RELAY_LEGACY_XRAY_BINARY" "$candidate_binary" || return 1
+        validate_relay_runtime_candidate "$candidate_binary" temporary "" || {
+            relay_error "Existing isolated Xray validation failed after neutral-name staging."
+            return 1
+        }
+        version="$RELAY_VALIDATED_VERSION"
+        runtime_needs_activation=1
+    elif [[ "$neutral_runtime_present" == "1" ]]; then
+        relay_error "No valid neutral relay runtime or migratable isolated Xray is available."
+        return 1
+    else
+        return 0
+    fi
+
+    if [[ -f "$RELAY_CONFIG" ]]; then
+        if [[ "$candidate_binary" == "$RELAY_BINARY" ]]; then
+            validate_relay_runtime_candidate "$candidate_binary" managed "$RELAY_CONFIG" || return 1
+        else
+            validate_relay_runtime_candidate "$candidate_binary" temporary "$RELAY_CONFIG" || return 1
+        fi
+        version="$RELAY_VALIDATED_VERSION"
+    fi
+
+    if [[ "$runtime_needs_activation" == "0" ]] && relay_service_uses_neutral_runtime && \
+       ! known_neutral_dropin_matches; then
+        if systemctl is-active --quiet "$RELAY_SERVICE_NAME" && ! verify_relay_process_name; then
+            relay_error "The active relay service is not running with the neutral behify-relayd process name."
+            return 1
+        fi
+        return 0
+    fi
+
+    systemctl is-active --quiet "$RELAY_SERVICE_NAME" && service_was_active=1
+    systemctl is-enabled --quiet "$RELAY_SERVICE_NAME" && service_was_enabled=1
+    [[ -f "$RELAY_SERVICE_FILE" ]] && unit_existed=1
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    backup_dir="$RELAY_BACKUPS_DIR/migration-$timestamp-$$"
+    mkdir -p "$backup_dir" && chmod 0700 "$backup_dir" || return 1
+    backup_relay_runtime_state "$backup_dir/runtime" || return 1
+    [[ "$unit_existed" == "0" ]] || cp "$RELAY_SERVICE_FILE" "$backup_dir/behify-relay.service" || return 1
+    if known_neutral_dropin_matches; then
+        cp "$RELAY_KNOWN_NEUTRAL_DROPIN" "$backup_dir/10-neutral-binary.conf" || return 1
+    fi
+
+    begin_relay_critical_section
+    if [[ "$runtime_needs_activation" == "1" ]] && \
+       ! activate_xray_candidate "v$version" "$candidate_binary"; then
+        migration_failed=1
+    fi
+    if [[ "$migration_failed" == "0" && "$unit_existed" == "1" ]] && ! ensure_relay_service; then
+        migration_failed=1
+    fi
+    if [[ "$migration_failed" == "0" ]] && relay_service_uses_neutral_runtime && \
+       known_neutral_dropin_matches; then
+        rm -f "$RELAY_KNOWN_NEUTRAL_DROPIN" || migration_failed=1
+        [[ "$migration_failed" != "0" ]] || dropin_was_removed=1
+        [[ "$migration_failed" != "0" ]] || systemctl daemon-reload >/dev/null 2>&1 || migration_failed=1
+    fi
+    if [[ "$migration_failed" == "0" && "$service_was_active" == "1" ]]; then
+        if ! systemctl restart "$RELAY_SERVICE_NAME" || \
+           ! systemctl is-active --quiet "$RELAY_SERVICE_NAME" || \
+           ! verify_relay_process_name; then
+            migration_failed=1
+        elif [[ -f "$RELAY_DEFINITIONS" ]] && \
+             { ! validate_relay_definitions_file "$RELAY_DEFINITIONS" || \
+               ! verify_relay_sockets "$RELAY_DEFINITIONS"; }; then
+            migration_failed=1
+        fi
+    fi
+
+    if [[ "$migration_failed" != "0" ]]; then
+        relay_error "Neutral relay runtime migration failed. Restoring the previous state."
+        rollback_neutral_runtime_migration "$backup_dir" "$service_was_active" \
+            "$unit_existed" "$dropin_was_removed" || \
+            relay_error "Neutral runtime rollback was incomplete. Backup: $backup_dir"
+        end_relay_critical_section
+        return 1
+    fi
+    end_relay_critical_section
+
+    # Neither migration nor rollback changes enablement; assert it remained stable.
+    if [[ "$service_was_enabled" == "1" ]] && ! systemctl is-enabled --quiet "$RELAY_SERVICE_NAME"; then
+        relay_error "Relay service enablement changed unexpectedly during migration."
+        return 1
+    fi
+    printf 'Isolated Xray runtime is ready as %s (v%s).\n' "$RELAY_BINARY" "$version"
 }
 
 validate_relay_definitions_file() {
@@ -566,9 +998,9 @@ restore_relay_config_backup() {
 apply_relay_definitions() {
     local candidate_definitions="$1"
     local temp_dir xray_temp_dir backup_dir timestamp staged_relays staged_config
-    local confirm old_xray_target validation_binary relay_count
+    local confirm validation_binary relay_count
     local resolved_candidate resolved_destination resolved_temp_root
-    local service_was_active=0 service_was_enabled=0 service_file_existed=0 xray_activated=0
+    local service_was_active=0 service_was_enabled=0 service_file_existed=0 runtime_activated=0
 
     RELAY_APPLY_FAILURE="transaction_failed"
     resolved_temp_root=$(readlink -f "${TMPDIR:-/tmp}") || return 1
@@ -581,7 +1013,7 @@ apply_relay_definitions() {
         relay_error "Internal error: candidate relay definitions are outside the temporary root: $resolved_candidate"
         return 1
     fi
-    if [[ ! -x "$RELAY_XRAY_BINARY" ]] && ! resolve_xray_asset >/dev/null; then
+    if [[ ! -x "$RELAY_BINARY" ]] && ! resolve_xray_asset >/dev/null; then
         relay_error "Unsupported Xray architecture: $(uname -m)"
         return 1
     fi
@@ -604,6 +1036,7 @@ apply_relay_definitions() {
         relay_error "Could not back up config.json."
         return 1
     fi
+    backup_relay_runtime_state "$backup_dir/runtime" || return 1
 
     make_relay_temp_dir temp_dir || return 1
     resolved_destination="$(readlink -f "$temp_dir")/relays.json"
@@ -627,9 +1060,8 @@ apply_relay_definitions() {
     fi
 
     relay_count=$(jq '[.[] | select(.enabled == true)] | length' "$temp_dir/relays.json")
-    old_xray_target=$(readlink -f "$RELAY_XRAY_CURRENT" 2>/dev/null || true)
-    if [[ -x "$RELAY_XRAY_BINARY" ]]; then
-        validation_binary="$RELAY_XRAY_BINARY"
+    if [[ -x "$RELAY_BINARY" ]]; then
+        validation_binary="$RELAY_BINARY"
     else
         printf 'The isolated Behify relay Xray is not installed.\n'
         printf 'The relay component requires its own isolated Xray installation.\n'
@@ -667,7 +1099,7 @@ apply_relay_definitions() {
     fi
 
     begin_relay_critical_section
-    if [[ "$validation_binary" != "$RELAY_XRAY_BINARY" ]]; then
+    if [[ "$validation_binary" != "$RELAY_BINARY" ]]; then
         if ! activate_xray_candidate "$XRAY_LATEST_VERSION" "$validation_binary"; then
             RELAY_APPLY_FAILURE="xray_install_failed"
             safe_remove_temp_dir "$xray_temp_dir"
@@ -675,13 +1107,11 @@ apply_relay_definitions() {
             end_relay_critical_section
             return 1
         fi
-        xray_activated=1
+        runtime_activated=1
     fi
 
     if [[ "$relay_count" -gt 0 ]] && ! ensure_relay_service; then
-        [[ "$xray_activated" == "1" ]] && {
-            [[ -n "$old_xray_target" ]] && switch_xray_current "$old_xray_target" || rm -f "$RELAY_XRAY_CURRENT"
-        }
+        [[ "$runtime_activated" == "0" ]] || restore_relay_runtime_state "$backup_dir/runtime"
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         end_relay_critical_section
@@ -689,9 +1119,7 @@ apply_relay_definitions() {
     fi
 
     make_relay_temp_file staged_relays "$RELAY_CONFIG_DIR/.relays.json.XXXXXX" || {
-        if [[ "$xray_activated" == "1" ]]; then
-            [[ -n "$old_xray_target" ]] && switch_xray_current "$old_xray_target" || rm -f "$RELAY_XRAY_CURRENT"
-        fi
+        [[ "$runtime_activated" == "0" ]] || restore_relay_runtime_state "$backup_dir/runtime"
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         end_relay_critical_section
@@ -699,9 +1127,7 @@ apply_relay_definitions() {
     }
     make_relay_temp_file staged_config "$RELAY_CONFIG_DIR/.config.json.XXXXXX" || {
         rm -f "$staged_relays"
-        if [[ "$xray_activated" == "1" ]]; then
-            [[ -n "$old_xray_target" ]] && switch_xray_current "$old_xray_target" || rm -f "$RELAY_XRAY_CURRENT"
-        fi
+        [[ "$runtime_activated" == "0" ]] || restore_relay_runtime_state "$backup_dir/runtime"
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         end_relay_critical_section
@@ -718,13 +1144,8 @@ apply_relay_definitions() {
         else
             relay_error "Automatic rollback failed. Backup retained at $backup_dir."
         fi
-        if [[ "$xray_activated" == "1" ]]; then
-            if [[ -n "$old_xray_target" ]]; then
-                switch_xray_current "$old_xray_target" || relay_error "Could not restore previous Xray target."
-            else
-                rm -f "$RELAY_XRAY_CURRENT"
-            fi
-        fi
+        [[ "$runtime_activated" == "0" ]] || \
+            restore_relay_runtime_state "$backup_dir/runtime" || relay_error "Could not restore previous relay runtime."
         [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
         safe_remove_temp_dir "$temp_dir"
         end_relay_critical_section
@@ -736,13 +1157,8 @@ apply_relay_definitions() {
            ! systemctl disable --now "$RELAY_SERVICE_NAME"; then
             relay_error "Could not stop the empty relay service. Rolling back."
             restore_relay_config_backup "$backup_dir" || relay_error "Config rollback failed: $backup_dir"
-            if [[ "$xray_activated" == "1" ]]; then
-                if [[ -n "$old_xray_target" ]]; then
-                    switch_xray_current "$old_xray_target" || relay_error "Could not restore previous Xray target."
-                else
-                    rm -f "$RELAY_XRAY_CURRENT"
-                fi
-            fi
+            [[ "$runtime_activated" == "0" ]] || \
+                restore_relay_runtime_state "$backup_dir/runtime" || relay_error "Could not restore previous relay runtime."
             [[ "$service_was_active" == "1" ]] && systemctl restart "$RELAY_SERVICE_NAME" >/dev/null 2>&1
             [[ -n "$xray_temp_dir" ]] && safe_remove_temp_dir "$xray_temp_dir"
             safe_remove_temp_dir "$temp_dir"
@@ -759,6 +1175,7 @@ apply_relay_definitions() {
     if ! systemctl enable "$RELAY_SERVICE_NAME" >/dev/null 2>&1 || \
        ! systemctl restart "$RELAY_SERVICE_NAME" || \
        ! systemctl is-active --quiet "$RELAY_SERVICE_NAME" || \
+       ! verify_relay_process_name || \
        ! verify_relay_sockets "$temp_dir/relays.json"; then
         RELAY_APPLY_FAILURE="service_rollback"
         relay_error "Relay service failed after configuration change. Rolling back."
@@ -767,13 +1184,8 @@ apply_relay_definitions() {
         else
             relay_error "Automatic rollback failed. Backup retained at $backup_dir."
         fi
-        if [[ "$xray_activated" == "1" ]]; then
-            if [[ -n "$old_xray_target" ]]; then
-                switch_xray_current "$old_xray_target" || relay_error "Could not restore previous Xray target."
-            else
-                rm -f "$RELAY_XRAY_CURRENT"
-            fi
-        fi
+        [[ "$runtime_activated" == "0" ]] || \
+            restore_relay_runtime_state "$backup_dir/runtime" || relay_error "Could not restore previous relay runtime."
         if [[ "$service_was_active" == "1" && -f "$backup_dir/config.json" ]]; then
             if systemctl restart "$RELAY_SERVICE_NAME" >/dev/null 2>&1; then
                 printf 'Previous relay service restarted successfully.\n'
@@ -1155,8 +1567,8 @@ restart_relay() {
         relay_error "$RELAY_SERVICE_NAME is not installed."
         return 1
     fi
-    if [[ ! -x "$RELAY_XRAY_BINARY" || ! -f "$RELAY_CONFIG" ]] || \
-       ! "$RELAY_XRAY_BINARY" run -test -config "$RELAY_CONFIG" >/dev/null 2>&1; then
+    if [[ ! -x "$RELAY_BINARY" || ! -f "$RELAY_CONFIG" ]] || \
+       ! "$RELAY_BINARY" run -test -config "$RELAY_CONFIG" >/dev/null 2>&1; then
         relay_error "Relay configuration validation failed; service was not restarted."
         return 1
     fi
@@ -1169,7 +1581,9 @@ restart_relay() {
         relay_error "No enabled relays exist; the relay service remains stopped."
         return 1
     fi
-    systemctl restart "$RELAY_SERVICE_NAME" && systemctl is-active "$RELAY_SERVICE_NAME"
+    systemctl restart "$RELAY_SERVICE_NAME" && \
+        systemctl is-active "$RELAY_SERVICE_NAME" && \
+        verify_relay_process_name && verify_relay_sockets "$RELAY_DEFINITIONS"
 }
 
 view_relay_logs() {
@@ -1177,25 +1591,25 @@ view_relay_logs() {
 }
 
 show_xray_version() {
-    if [[ ! -x "$RELAY_XRAY_BINARY" ]]; then
+    if [[ ! -x "$RELAY_BINARY" ]]; then
         printf 'Isolated relay Xray is not installed.\n'
         return 0
     fi
-    "$RELAY_XRAY_BINARY" version
+    "$RELAY_BINARY" version
 }
 
 xray_status_install() {
     local confirm temp_dir version
 
-    if [[ -x "$RELAY_XRAY_BINARY" ]]; then
+    if [[ -x "$RELAY_BINARY" ]]; then
         version=$(get_installed_xray_version || true)
         printf 'Isolated relay Xray is installed: v%s\n' "${version:-unknown}"
-        printf 'Binary: %s\n' "$RELAY_XRAY_BINARY"
+        printf 'Runtime binary: %s\n' "$RELAY_BINARY"
         return 0
     fi
 
     printf 'Isolated relay Xray is not installed.\n'
-    printf 'This component uses only %s.\n' "$RELAY_XRAY_ROOT"
+    printf 'This component uses only Behify-owned paths below %s.\n' "$RELAY_ROOT"
     printf 'Existing panel and system Xray installations will not be touched.\n'
     read -r -p "Download and install the stable official Xray release? [y/N] " confirm || confirm=""
     [[ "$confirm" =~ ^[Yy]$ ]] || {
@@ -1209,6 +1623,12 @@ xray_status_install() {
         safe_remove_temp_dir "$temp_dir"
         return 1
     }
+    if [[ -f "$RELAY_CONFIG" ]] && \
+       ! "$XRAY_CANDIDATE_BINARY" run -test -config "$RELAY_CONFIG" >/dev/null 2>&1; then
+        relay_error "Verified Xray candidate rejected the existing relay configuration."
+        safe_remove_temp_dir "$temp_dir"
+        return 1
+    fi
     begin_relay_critical_section
     if ! activate_xray_candidate "$XRAY_LATEST_VERSION" "$XRAY_CANDIDATE_BINARY"; then
         end_relay_critical_section
@@ -1229,7 +1649,8 @@ relay_diagnostics() {
     [[ -f "$RELAY_CONFIG" ]] && config_status="invalid"
     [[ -f "$RELAY_CONFIG" ]] && jq empty "$RELAY_CONFIG" >/dev/null 2>&1 && config_status="valid"
     printf 'Architecture: %s\n' "$(uname -m)"
-    printf 'Xray binary: %s\n' "$RELAY_XRAY_BINARY"
+    printf 'Relay runtime: %s\n' "$RELAY_BINARY"
+    printf 'Legacy isolated Xray: %s\n' "$RELAY_LEGACY_XRAY_BINARY"
     printf 'Definitions: %s (%s)\n' "$RELAY_DEFINITIONS" "$definitions_status"
     printf 'Generated config: %s (%s)\n' "$RELAY_CONFIG" "$config_status"
     printf 'Service unit: %s\n' "$RELAY_SERVICE_FILE"
@@ -1237,6 +1658,10 @@ relay_diagnostics() {
         systemctl show "$RELAY_SERVICE_NAME" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
     else
         printf 'Service: not installed\n'
+    fi
+    if [[ -d "$RELAY_SERVICE_DROPIN_DIR" ]]; then
+        find "$RELAY_SERVICE_DROPIN_DIR" -maxdepth 1 -type f -name '*.conf' -print \
+            2>/dev/null | sed 's/^/Service drop-in: /'
     fi
     if [[ -e /relays.json ]]; then
         printf 'Warning: unexpected /relays.json exists. It was not removed because ownership cannot be proven.\n'
@@ -1247,9 +1672,7 @@ relay_diagnostics() {
 }
 
 get_installed_xray_version() {
-    [[ -x "$RELAY_XRAY_BINARY" ]] || return 1
-    "$RELAY_XRAY_BINARY" version 2>/dev/null | head -n 1 | \
-        grep -oE '[0-9]+(\.[0-9]+)+' | head -n 1
+    get_relay_runtime_version "$RELAY_BINARY"
 }
 
 check_xray_update() {
@@ -1274,7 +1697,7 @@ check_xray_update() {
 }
 
 update_xray() {
-    local installed latest old_target service_was_active=0
+    local installed latest service_was_active=0
     local confirm temp_dir backup_dir timestamp candidate_config rollback_failed=0
 
     resolve_xray_asset >/dev/null || {
@@ -1329,21 +1752,20 @@ update_xray() {
         return 1
     fi
 
-    old_target=$(readlink -f "$RELAY_XRAY_CURRENT" 2>/dev/null || true)
     systemctl is-active --quiet "$RELAY_SERVICE_NAME" && service_was_active=1
     timestamp=$(date +%Y%m%d-%H%M%S)
-    backup_dir="$RELAY_XRAY_ROOT/backups/$timestamp"
+    backup_dir="$RELAY_BACKUPS_DIR/$timestamp"
     while [[ -e "$backup_dir" ]]; do
         sleep 1
         timestamp=$(date +%Y%m%d-%H%M%S)
-        backup_dir="$RELAY_XRAY_ROOT/backups/$timestamp"
+        backup_dir="$RELAY_BACKUPS_DIR/$timestamp"
     done
     install -d -m 0700 "$backup_dir" || {
         safe_remove_temp_dir "$temp_dir"
         return 1
     }
-    if [[ -x "$RELAY_XRAY_BINARY" ]] && ! install -m 0755 "$RELAY_XRAY_BINARY" "$backup_dir/xray"; then
-        relay_error "Could not back up the installed Xray binary."
+    if ! backup_relay_runtime_state "$backup_dir/runtime"; then
+        relay_error "Could not back up the installed relay runtime."
         safe_remove_temp_dir "$temp_dir"
         return 1
     fi
@@ -1366,15 +1788,14 @@ update_xray() {
     fi
 
     if [[ "$service_was_active" == "1" ]] && \
-       { ! systemctl restart "$RELAY_SERVICE_NAME" || ! systemctl is-active --quiet "$RELAY_SERVICE_NAME"; }; then
+       { ! systemctl restart "$RELAY_SERVICE_NAME" || \
+         ! systemctl is-active --quiet "$RELAY_SERVICE_NAME" || \
+         ! verify_relay_process_name || \
+         { [[ -f "$RELAY_DEFINITIONS" ]] && \
+           { ! validate_relay_definitions_file "$RELAY_DEFINITIONS" || \
+             ! verify_relay_sockets "$RELAY_DEFINITIONS"; }; }; }; then
         relay_error "Updated Xray failed to start. Restoring the previous release."
-        if [[ -n "$old_target" && -x "$old_target/xray" ]]; then
-            switch_xray_current "$old_target" || rollback_failed=1
-        elif [[ -x "$backup_dir/xray" ]]; then
-            switch_xray_current "$backup_dir" || rollback_failed=1
-        else
-            rm -f "$RELAY_XRAY_CURRENT" || rollback_failed=1
-        fi
+        restore_relay_runtime_state "$backup_dir/runtime" || rollback_failed=1
         if [[ -f "$backup_dir/relays.json" ]] && \
            ! install -m 0600 "$backup_dir/relays.json" "$RELAY_DEFINITIONS"; then
             rollback_failed=1
@@ -1383,7 +1804,7 @@ update_xray() {
            ! install -m 0600 "$backup_dir/config.json" "$RELAY_CONFIG"; then
             rollback_failed=1
         fi
-        if [[ "$rollback_failed" == "0" && -x "$RELAY_XRAY_BINARY" ]]; then
+        if [[ "$rollback_failed" == "0" && -x "$RELAY_BINARY" ]]; then
             if systemctl restart "$RELAY_SERVICE_NAME" >/dev/null 2>&1; then
                 printf 'Previous Xray release restored and restarted.\n'
             else
@@ -1404,7 +1825,7 @@ update_xray() {
 
 remove_relay_component() {
     local confirm
-    local unit_changed=0
+    local unit_changed=0 dropin_changed=0 canonical_neutral=0
 
     printf 'This removes only the Behify relay service, relay configs, and isolated Xray.\n'
     read -r -p "Remove the Behify relay component? [y/N] " confirm || confirm=""
@@ -1419,6 +1840,7 @@ remove_relay_component() {
         relay_error "A loaded service named $RELAY_SERVICE_NAME exists, but ownership cannot be verified. Removal aborted."
         return 1
     fi
+    relay_service_uses_neutral_runtime && canonical_neutral=1
     if relay_service_is_owned; then
         systemctl disable --now "$RELAY_SERVICE_NAME" || {
             relay_error "Could not stop and disable $RELAY_SERVICE_NAME. Removal aborted."
@@ -1429,9 +1851,20 @@ remove_relay_component() {
             unit_changed=1
         fi
     fi
-    [[ "$unit_changed" == "0" ]] || systemctl daemon-reload || return 1
-    safe_remove_managed_tree "$RELAY_XRAY_ROOT" || return 1
+    if [[ "$canonical_neutral" == "1" ]] && known_neutral_dropin_matches; then
+        rm -f "$RELAY_KNOWN_NEUTRAL_DROPIN" || return 1
+        dropin_changed=1
+    fi
+    [[ "$unit_changed" == "0" && "$dropin_changed" == "0" ]] || systemctl daemon-reload || return 1
+    safe_remove_managed_tree "$RELAY_BIN_DIR" || return 1
+    safe_remove_managed_tree "$RELAY_RELEASES_DIR" || return 1
+    safe_remove_managed_tree "$RELAY_BACKUPS_DIR" || return 1
+    safe_remove_managed_tree "$RELAY_LEGACY_XRAY_ROOT" || return 1
     safe_remove_managed_tree "$RELAY_CONFIG_DIR" || return 1
+    if [[ -d "$RELAY_SERVICE_DROPIN_DIR" ]] && \
+       find "$RELAY_SERVICE_DROPIN_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        printf 'Administrator-created relay service drop-ins were preserved in %s.\n' "$RELAY_SERVICE_DROPIN_DIR"
+    fi
     printf 'Behify relay component removed. Existing Xray and panel installations were not touched.\n'
 }
 
@@ -1488,6 +1921,19 @@ display_relay_menu() {
 if [[ "$RELAY_SOURCE_ONLY" == "1" ]]; then
     return 0 2>/dev/null || exit 0
 fi
+
+if [[ "${1:-}" == "--migrate-runtime" ]]; then
+    migrate_legacy_relay_runtime
+    exit $?
+elif [[ $# -gt 0 ]]; then
+    relay_error "Unknown relay-manager argument: $1"
+    exit 1
+fi
+
+migrate_legacy_relay_runtime || {
+    relay_error "Relay management stopped because the neutral runtime migration did not complete safely."
+    exit 1
+}
 
 while true; do
     display_relay_menu

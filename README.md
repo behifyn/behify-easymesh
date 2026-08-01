@@ -72,11 +72,18 @@ Destination port: 443
 Dedicated relay paths:
 
 ```text
-/opt/behify-easymesh/relay/xray/current/xray
+/opt/behify-easymesh/relay/bin/behify-relayd
+/opt/behify-easymesh/relay/releases/<release-id>/behify-relayd
 /etc/behify-easymesh/relay/relays.json
 /etc/behify-easymesh/relay/config.json
 /etc/systemd/system/behify-relay.service
 ```
+
+The downloaded asset remains the official XTLS/Xray-core release and retains all release, architecture, archive-path, and SHA-256 verification. After extraction it is staged and executed only as `behify-relayd`; the relay service never runs a path whose basename is `xray`.
+
+Reinstalling migrates a valid legacy isolated binary from `/opt/behify-easymesh/relay/xray/current/xray` without network access or another download. The migration preserves relay definitions, generated configuration, Xray version, and relay-service active/enabled state. An active relay is restarted only after the neutral binary and owned unit are validated, then its process name and TCP/UDP listeners are verified. Failure restores the previous runtime, unit, known test drop-in, and service state.
+
+The temporary `10-neutral-binary.conf` workaround is removed only when its complete content exactly matches the Behify test workaround and the canonical unit already uses `behify-relayd`. Unknown administrator drop-ins are retained.
 
 TCP and UDP conflicts are checked separately with `ss`. Sensitive ports such as SSH port `22` produce an additional confirmation warning. EasyTier route checks are advisory: a route warning does not overwrite or remove the existing relay configuration.
 

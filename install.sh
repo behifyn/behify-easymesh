@@ -29,6 +29,9 @@ cp "$SCRIPT_DIR/README.md" "$SCRIPT_DIR/README_FA.md" \
 install -d "$INSTALL_DIR/relay"
 install -m 0755 "$RELAY_MANAGER_FILE" "$INSTALL_DIR/relay/relay-manager"
 
+# This local-only migration never downloads Xray and preserves relay service state.
+"$INSTALL_DIR/relay/relay-manager" --migrate-runtime
+
 if [[ -d "$SCRIPT_DIR/docs" ]]; then
   cp -a "$SCRIPT_DIR/docs" "$INSTALL_DIR/"
 fi

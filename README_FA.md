@@ -68,11 +68,16 @@ Destination port: 443
 مسیرهای اختصاصی رله:
 
 ```text
-/opt/behify-easymesh/relay/xray/current/xray
+/opt/behify-easymesh/relay/bin/behify-relayd
+/opt/behify-easymesh/relay/releases/<release-id>/behify-relayd
 /etc/behify-easymesh/relay/relays.json
 /etc/behify-easymesh/relay/config.json
 /etc/systemd/system/behify-relay.service
 ```
+
+فایل دانلودشده همچنان باینری رسمی XTLS/Xray-core است و تمام بررسی‌های نسخه پایدار، معماری، مسیرهای آرشیو و SHA-256 حفظ می‌شوند. پس از استخراج، باینری فقط با نام خنثی `behify-relayd` آماده و اجرا می‌شود و سرویس رله هیچ فایلی با basename برابر `xray` اجرا نمی‌کند.
+
+نصب مجدد، باینری معتبر قدیمی در مسیر `/opt/behify-easymesh/relay/xray/current/xray` را بدون دسترسی شبکه یا دانلود دوباره به runtime جدید منتقل می‌کند. تعریف‌ها، تنظیمات تولیدشده، نسخه Xray و وضعیت active/enabled سرویس حفظ می‌شوند. در صورت شکست، runtime، unit، drop-in آزمایشی شناخته‌شده و وضعیت قبلی سرویس بازیابی می‌شوند. drop-in موقت فقط در صورت تطبیق کامل با workaround شناخته‌شده Behify حذف می‌شود و drop-inهای ناشناس مدیر سیستم باقی می‌مانند.
 
 تداخل پورت‌های TCP و UDP به‌صورت جداگانه با `ss` بررسی می‌شود. پورت‌های حساس مانند پورت SSH یعنی `22` هشدار تأیید جداگانه دارند. بررسی مسیر EasyTier فقط هشداردهنده است؛ ناموفق بودن این بررسی تنظیمات موجود رله را بازنویسی یا حذف نمی‌کند.
 
