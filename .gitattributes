@@ -1,5 +1,8 @@
 # Keep shell scripts Linux-compatible
+/.gitattributes text eol=lf
+/.gitignore text eol=lf
 *.sh text eol=lf
+*.sh.in text eol=lf
 easymesh text eol=lf
 install.sh text eol=lf
 relay-manager text eol=lf
@@ -8,6 +11,8 @@ relay-manager text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
 *.env text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
 
 # Binary files
 core/** binary

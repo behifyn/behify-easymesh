@@ -17,10 +17,27 @@ tmp/
 # Local test outputs
 dist/
 build/
+.release-cache/
+release-output/
+release-staging/
+*.tar.gz
+SHA256SUMS.local
 
 # Secrets / local env
 .env
+*.env.local
 *.key
 *.pem
+*.secret
+*.secrets
+config.local.*
+relays.local.json
+mesh.env
+
+# Installer and rollback output
+*.backup
+*.bak
+backups/
+easymesh-core-backup-*/
 
 *.zip

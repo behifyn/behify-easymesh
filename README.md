@@ -1,148 +1,165 @@
 # Behify EasyMesh
 
-Private Behify build of EasyMesh for offline server deployment and customized server-side usage.
+Behify EasyMesh is a source-available Linux administration tool for building and operating an EasyTier mesh and an optional isolated Dokodemo-Door port relay.
 
-## Status
+Version `1.0.0-rc.1` is a prerelease candidate for the first stable release. It pins EasyTier `v2.6.4` and supports only Linux `x86_64` and `aarch64`.
 
-This repository is currently a private modified build based on the original Easy-Mesh project.
+## Project Relationship and License
 
-Current focus:
+Behify EasyMesh is directly derived from [Easy-Mesh by Musixal](https://github.com/Musixal/Easy-Mesh). The original project and author are credited, and the original `LICENSE` and `NOTICE` are retained unchanged. Behify EasyMesh is independently maintained and is not the official EasyTier project.
 
-- Keep the v2 script as the main version
-- Prepare offline installation support
-- Keep local EasyTier core binaries inside the repository
-- Customize visible branding for Behify
-- Improve reliability step by step
+EasyTier is a separate upstream component distributed under LGPL-3.0. The optional relay uses a separately managed Xray-core runtime under MPL-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the `licenses/` directory.
 
-## Install
+This repository is source-available under the included custom license, not an OSI-approved open-source license. The custom license restricts use of the software in content published on YouTube and other video-sharing platforms. Read `LICENSE` before use or redistribution.
 
-Clone or upload this repository to your server, then run:
+## Supported Systems
+
+- Linux with systemd
+- `x86_64` / `amd64`
+- `aarch64` / `arm64`
+- EasyTier `v2.6.4` only
+
+ARMv7 and other architectures fail before installation changes the system.
+
+The package installer requires `bash`, `awk`, `grep`, `sha256sum`, `od`, `mktemp`, and standard core utilities. The online bootstrap additionally requires `curl` and `tar`. Mesh address validation requires `python3`. Install missing prerequisites through your operating system package manager; Behify's installer does not install packages automatically.
+
+## Verified Online Installation
+
+Download the versioned bootstrap and published checksums, verify the bootstrap, then run it:
 
 ```bash
-sudo bash install.sh
+curl -fLO https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.1/online-install-v1.0.0-rc.1.sh
+curl -fLO https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.1/SHA256SUMS
+grep 'online-install-v1.0.0-rc.1.sh$' SHA256SUMS | sha256sum -c -
+sudo bash online-install-v1.0.0-rc.1.sh
+```
+
+The bootstrap detects the architecture, downloads only the matching immutable Behify `v1.0.0-rc.1` package, verifies its embedded published SHA-256, validates the archive path list, and then invokes the package's offline installer. It never uses `curl | bash`.
+
+## Strict Offline Installation
+
+On a connected machine, download the correct Release asset and `SHA256SUMS`:
+
+```text
+behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz
+behify-easymesh-v1.0.0-rc.1-linux-aarch64.tar.gz
+```
+
+Transfer the selected archive and checksum file to the target, then verify and install:
+
+```bash
+grep 'behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz
+cd behify-easymesh-v1.0.0-rc.1-linux-x86_64
+sudo EASYMESH_OFFLINE=1 bash install.sh
+```
+
+Use the `aarch64` asset and directory name on ARM64. The architecture package contains only its matching `easytier-core` and `easytier-cli`. The installer performs no network operation and rejects missing, modified, wrong-version, or wrong-architecture files before changing the installed application.
+
+GitHub's automatically generated source ZIP is not an offline installer. The exact EasyTier v2.6.4 corresponding source is published separately as `easytier-v2.6.4-source.tar.gz`.
+
+## Usage
+
+```bash
 sudo easymesh
+easymesh --version
 ```
 
-Use EasyTier v2.6.4:
-
-```bash
-sudo easymesh 2.6.4
-sudo easymesh --core v2.6.4
-```
-
-Strict offline:
-
-```bash
-sudo EASYMESH_OFFLINE=1 easymesh
-sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
-```
-
-Re-running `install.sh` updates the packaged scripts, documentation, and local EasyTier cores without downloading Xray or changing the running EasyMesh service. Existing relay definitions, generated relay configuration, isolated Xray releases, and `behify-relay.service` state are preserved.
-
-## Architecture-safe core selection
-
-Local core packages are selected from the detected system architecture:
-
-- `x86_64` or `amd64`: `easytier-linux-x86_64`
-- `aarch64` or `arm64`: `easytier-linux-aarch64`
-
-Existing ARMv7 package selection remains supported where matching local binaries are present. Unknown architectures stop safely and are never redirected to an x86_64 package.
-
-Running `sudo easymesh 2.6.4` when another core version is installed offers a core-only upgrade. Both candidate binaries are copied to temporary files and executed for architecture and version validation before the current service is stopped. After confirmation, the script backs up and replaces only `easytier-core` and `easytier-cli`; the existing `easymesh.service` file, its `ExecStart`, and the mesh configuration are preserved. A failed installation or service restart automatically restores the backup.
-
-## Relay / Port Routing
-
-Menu option `[12] Relay / Port Routing` provides an optional Dokodemo-Door relay. The end user does not need 3x-ui, Hiddify Manager, or an existing Xray installation. Behify downloads and runs a dedicated Xray binary that is isolated from any panel-managed Xray already installed on the server.
-
-Xray is downloaded only after explicit confirmation. The manager accepts only a stable, non-draft, non-prerelease release from the official `XTLS/Xray-core` GitHub repository. The archive must include an official GitHub SHA-256 digest, and checksum or archive-path validation failure stops installation before the binary is executed or activated.
-
-Relay modes are `tcp`, `udp`, and `both`. TCP is the default and is appropriate for normal TCP-based VLESS, VMess, Trojan, Reality, WebSocket, and similar transports. UDP performs direct UDP forwarding only. `both` creates separate TCP and UDP listeners on the same numerical port; it is not required merely because an application carries UDP inside a TCP connection.
-
-For example, a UDP relay can listen on public port `443` and forward it to EasyTier mesh address `10.144.144.1` port `443`:
+Expected version output:
 
 ```text
-Name: mesh-udp-443
-Protocol: udp
-Listen address: 0.0.0.0
-Listen port: 443
-Destination IP: 10.144.144.1
-Destination port: 443
+Behify EasyMesh v1.0.0-rc.1
+EasyTier v2.6.4
 ```
 
-Dedicated relay paths:
+The menu manages an already installed runtime. Opening it never downloads, installs, or replaces EasyTier. Select **Connect to the Mesh Network** to create or replace the mesh configuration.
 
-```text
-/opt/behify-easymesh/relay/bin/behify-relayd
-/opt/behify-easymesh/relay/releases/<release-id>/behify-relayd
-/etc/behify-easymesh/relay/relays.json
-/etc/behify-easymesh/relay/config.json
-/etc/systemd/system/behify-relay.service
+EasyTier attempts direct/P2P connectivity. When a direct path is unavailable, it may use a relay or multi-hop path through other peers. For example, `Iran1 -> Iran2 -> destination` can occur as fallback. Version 1.0.0-rc.1 intentionally preserves this tested behavior and does not impose endpoint-only or designated-relay roles.
+
+## Runtime and Configuration Paths
+
+| Purpose | Path or unit |
+| --- | --- |
+| Application | `/opt/behify-easymesh` |
+| Command | `/usr/local/bin/easymesh` |
+| EasyTier runtime | `/root/easytier/easytier-core`, `/root/easytier/easytier-cli` |
+| Mesh service | `/etc/systemd/system/easymesh.service` |
+| Root-only mesh settings | `/etc/behify-easymesh/mesh.env` |
+| Mesh configuration backups | `/etc/behify-easymesh/backups/` |
+| Installer backups | `/opt/behify-easymesh-backups/` |
+| Watchdog service | `easymesh-watchdog.service` |
+
+`mesh.env` is mode `0600`; the network secret is not written into the normally readable systemd unit. New configuration is staged and validated before activation, and failure restores the previous files and service state.
+
+## Safe Upgrade and Rollback
+
+Before upgrading an existing pre-v1 installation, inspect only the legacy maintenance locations:
+
+```bash
+sudo test ! -e /root/easytier/reset.sh || sudo stat /root/easytier/reset.sh
+sudo crontab -l 2>/dev/null | grep -F '/root/easytier/reset.sh' || true
 ```
 
-The downloaded asset remains the official XTLS/Xray-core release and retains all release, architecture, archive-path, and SHA-256 verification. After extraction it is staged and executed only as `behify-relayd`; the relay service never runs a path whose basename is `xray`.
+The RC installer refuses to proceed if that script or matching root-cron entry exists. Do not run or delete either item without separate operational authorization; unattended upgrade is not supported for affected installations.
 
-Reinstalling migrates a valid legacy isolated binary from `/opt/behify-easymesh/relay/xray/current/xray` without network access or another download. The migration preserves relay definitions, generated configuration, Xray version, and relay-service active/enabled state. An active relay is restarted only after the neutral binary and owned unit are validated, then its process name and TCP/UDP listeners are verified. Failure restores the previous runtime, unit, known test drop-in, and service state.
+Install a newer Behify package using the same verified process. If either installed EasyTier binary is missing, modified, or not v2.6.4, the installer treats the pair generically as unsupported, backs up existing files, stages and validates both v2.6.4 binaries, and replaces them while the managed mesh service is stopped.
 
-The temporary `10-neutral-binary.conf` workaround is removed only when its complete content exactly matches the Behify test workaround and the canonical unit already uses `behify-relayd`. Unknown administrator drop-ins are retained.
+The installer preserves whether `easymesh.service` was active and enabled. It does not start an inactive service or enable a disabled service. A failed activation or service validation restores the prior application, runtime pair, command path, and active state. Backups are retained under `/opt/behify-easymesh-backups/`.
 
-TCP and UDP conflicts are checked separately with `ss`. Sensitive ports such as SSH port `22` produce an additional confirmation warning. EasyTier route checks are advisory: a route warning does not overwrite or remove the existing relay configuration.
+## Uninstall and Purge
 
-Every configuration change backs up the current relay files, generates and validates temporary JSON, tests it with the dedicated Xray binary, and then atomically installs it. Only `behify-relay.service` is restarted. If validation, installation, or service startup fails, the previous relay configuration is restored automatically. The relay service uses `Wants=easymesh.service`; it does not contain or modify mesh IP, secret, peer, or `ExecStart` configuration.
+Normal uninstall removes verified Behify-owned application/runtime files but preserves mesh configuration, service files, backups, and the isolated relay:
 
-The Add Relay flow shows a confirmation summary before committing anything, explains and asks before installing the isolated Xray, verifies every requested TCP/UDP listening socket, and prints an explicit success, cancellation, validation failure, or rollback result. The relay dashboard uses local state only; GitHub is contacted only after selecting Xray installation or update.
+```bash
+sudo /opt/behify-easymesh/uninstall.sh
+```
 
-When the last enabled relay is removed, the validated empty configuration is retained and `behify-relay.service` is stopped and disabled. The relay manager remains installed so another relay can be added later.
+Explicit purge requires typing `PURGE` and additionally removes Behify-owned mesh configuration, mesh/watchdog units, and mesh backups:
 
-Check installed/running core version:
+```bash
+sudo /opt/behify-easymesh/uninstall.sh --purge
+```
+
+The uninstaller refuses to operate without the installation ownership marker. It does not remove an unrelated `/usr/local/bin/easymesh`, unrecognized service file, unrelated EasyTier runtime, system Xray, x-ui/3x-ui, or Hiddify files. The isolated relay is removed only from its own relay menu.
+
+## Isolated Relay
+
+Menu option **Relay / Port Routing** manages a dedicated Xray Dokodemo-Door component. The user does not need 3x-ui, x-ui, Hiddify Manager, or a system Xray installation.
+
+- Runtime: `/opt/behify-easymesh/relay/`
+- Definitions: `/etc/behify-easymesh/relay/relays.json`
+- Generated config: `/etc/behify-easymesh/relay/config.json`
+- Service: `behify-relay.service`
+- Process name: `behify-relayd`
+
+For example, a UDP relay can listen on public port `443` and forward to mesh IP `10.144.144.1` port `443`. TCP, UDP, and Both modes are supported. Port conflicts and route reachability are checked before activation. Configuration updates validate in staging and roll back on service failure.
+
+The relay manager does not modify or control `/etc/xray`, `/usr/local/etc/xray`, x-ui/3x-ui, Hiddify, `xray.service`, or unrelated Xray processes.
+
+## Troubleshooting
+
+Check installed and running versions:
 
 ```bash
 /root/easytier/easytier-core --version
-PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
+/root/easytier/easytier-cli --version
+PID=$(systemctl show -p MainPID --value easymesh.service)
+sudo /proc/$PID/exe --version
 ```
 
-The main menu keeps runtime checks concise (`Core` and `Service`). Menu option `[13] Diagnostics` shows architecture, requested/default/installed/running versions, PID, executable paths, and restart count. Peer, route, and peer-center views use a wide terminal layout and add `--no-trunc` only when the installed `easytier-cli` supports it, preserving compatibility with v2.0.3.
-
-Core, service, and relay-component removals require an explicit `y` confirmation. Watchdog destinations must be valid IPv4 or IPv6 addresses; latency thresholds and check intervals are range-checked before the root-owned monitor script is written.
-
-Smoke/offline test package:
+Check services and logs:
 
 ```bash
-unzip behify-easymesh-test.zip
-cd behify-easymesh-test
-sudo EASYMESH_OFFLINE=1 easymesh
+systemctl status easymesh.service
+journalctl -u easymesh.service -n 100 --no-pager
+systemctl status behify-relay.service
+journalctl -u behify-relay.service -n 100 --no-pager
 ```
 
-After installation:
-```bash
-sudo easymesh
-```
+Peer and Peer-Center views use EasyTier's normal terminal formatting. Routes use `watch -w` only when the installed `watch` supports no-wrap mode; otherwise they safely fall back to normal wrapping.
 
-Offline Core
+Historical pre-v1 smoke reports are retained under `docs/historical/` for provenance and are not supported installation instructions.
 
-The project is intended to include EasyTier core binaries locally under:
+## Security
 
-core/v2.0.3/
-
-The default selected core is `v2.0.3`, which is the currently smoke-tested version.
-
-Local `v2.6.4` packages for x86_64 and aarch64 are stored under:
-
-core/v2.6.4/
-
-Future versions may include newer EasyTier core builds while keeping older versions as fallback.
-
-Future stability test candidates are documented only and are not enabled by default:
-
-```text
---enable-kcp-proxy
---enable-quic-proxy
---compression zstd
---multi-thread
-```
-
-Attribution
-
-Based on Easy-Mesh by Musixal. LICENSE and NOTICE retained.
-
-
----
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting. Do not include live mesh secrets or server credentials in public issues.

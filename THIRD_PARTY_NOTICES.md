@@ -14,7 +14,9 @@ Release packages include unmodified `easytier-core` and `easytier-cli` binaries 
 
 Project: https://github.com/EasyTier/EasyTier
 
-Corresponding source: https://github.com/EasyTier/EasyTier/archive/refs/tags/v2.6.4.tar.gz
+Corresponding source commit: https://github.com/EasyTier/EasyTier/archive/8428a89d2dabc94c97d370ec607c6ca142473626.tar.gz
+
+SHA-256: `37fb83c61d16e5a1a88354eb96d0caf526748ffd92364ac22ffad09316bb337c`
 
 The release process publishes the exact v2.6.4 source archive as a separate release asset. See [`licenses/EasyTier-LGPL-3.0.txt`](licenses/EasyTier-LGPL-3.0.txt).
 

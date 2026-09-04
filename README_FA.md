@@ -1,140 +1,154 @@
 # Behify EasyMesh
 
-نسخه خصوصی و ویرایش‌شده Behify از EasyMesh برای نصب آفلاین روی سرور و استفاده شخصی/داخلی.
+Behify EasyMesh یک ابزار source-available برای مدیریت شبکه EasyTier و رله اختیاری و ایزوله Dokodemo-Door در لینوکس است.
 
-## وضعیت پروژه
+نسخه `1.0.0-rc.1` یک prerelease candidate برای نخستین نسخه پایدار است. تنها EasyTier `v2.6.4` و معماری‌های Linux `x86_64` و `aarch64` پشتیبانی می‌شوند.
 
-این مخزن در حال حاضر یک نسخه خصوصی و تغییر داده‌شده بر پایه پروژه اصلی Easy-Mesh است.
+## ارتباط با پروژه اصلی و مجوز
 
-تمرکز فعلی:
+این پروژه مستقیما بر پایه [Easy-Mesh نوشته Musixal](https://github.com/Musixal/Easy-Mesh) ساخته شده است. نام نویسنده و پروژه اصلی ذکر شده و فایل‌های `LICENSE` و `NOTICE` بدون تغییر نگه داشته شده‌اند. Behify EasyMesh مستقل نگهداری می‌شود و پروژه رسمی EasyTier نیست.
 
-- استفاده از نسخه ۲ اسکریپت به عنوان نسخه اصلی
-- آماده‌سازی نصب آفلاین
-- نگه‌داری فایل‌های EasyTier Core داخل خود پروژه
-- تغییر برندینگ نمایشی به Behify
-- بهبود مرحله‌ای پایداری و نصب
+EasyTier یک مؤلفه بالادستی جداگانه با مجوز LGPL-3.0 است. Xray-core مورد استفاده در رله اختیاری نیز مؤلفه‌ای جداگانه با مجوز MPL-2.0 است. جزئیات در `THIRD_PARTY_NOTICES.md` و پوشه `licenses/` قرار دارد.
 
-## نصب
+مجوز سفارشی این مخزن OSI open-source نیست و استفاده از نرم‌افزار در محتوای منتشرشده در YouTube یا دیگر پلتفرم‌های اشتراک ویدیو را محدود می‌کند. قبل از استفاده یا توزیع، `LICENSE` را بخوانید.
 
-بعد از انتقال پروژه به سرور:
+## سیستم‌های پشتیبانی‌شده
+
+- Linux دارای systemd
+- `x86_64` / `amd64`
+- `aarch64` / `arm64`
+- فقط EasyTier `v2.6.4`
+
+ARMv7 و معماری‌های دیگر پیش از هر تغییر نصب با خطای واضح متوقف می‌شوند.
+
+نصب‌کننده بسته به `bash`، `awk`، `grep`، `sha256sum`، `od`، `mktemp` و ابزارهای پایه نیاز دارد. bootstrap آنلاین به `curl` و `tar` و اعتبارسنجی IP در منوی mesh به `python3` نیاز دارد. نصب‌کننده هیچ وابستگی package-manager را خودکار نصب نمی‌کند.
+
+## نصب آنلاین تاییدشده
+
+bootstrap نسخه‌دار و checksum منتشرشده را دریافت و تایید کنید:
 
 ```bash
-sudo bash install.sh
+curl -fLO https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.1/online-install-v1.0.0-rc.1.sh
+curl -fLO https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.1/SHA256SUMS
+grep 'online-install-v1.0.0-rc.1.sh$' SHA256SUMS | sha256sum -c -
+sudo bash online-install-v1.0.0-rc.1.sh
+```
+
+bootstrap معماری را تشخیص می‌دهد، فقط بسته immutable متناظر با Behify `v1.0.0-rc.1` را می‌گیرد، SHA-256 منتشرشده را قبل از extract بررسی می‌کند و سپس نصب‌کننده آفلاین داخل بسته را اجرا می‌کند. روش اصلی نصب `curl | bash` نیست.
+
+## نصب کاملا آفلاین
+
+روی یک سیستم متصل، فایل مناسب و `SHA256SUMS` را از Release بگیرید:
+
+```text
+behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz
+behify-easymesh-v1.0.0-rc.1-linux-aarch64.tar.gz
+```
+
+پس از انتقال به سرور مقصد:
+
+```bash
+grep 'behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf behify-easymesh-v1.0.0-rc.1-linux-x86_64.tar.gz
+cd behify-easymesh-v1.0.0-rc.1-linux-x86_64
+sudo EASYMESH_OFFLINE=1 bash install.sh
+```
+
+برای ARM64 نام `aarch64` را جایگزین کنید. هر بسته فقط `easytier-core` و `easytier-cli` همان معماری را دارد. نصب‌کننده در حالت آفلاین هیچ دسترسی شبکه‌ای انجام نمی‌دهد و فایل ناقص، تغییرکرده، با نسخه اشتباه یا معماری اشتباه را پیش از تغییر سیستم رد می‌کند.
+
+فایل خودکار Source code در GitHub نصب‌کننده آفلاین نیست. سورس متناظر دقیق EasyTier v2.6.4 جداگانه با نام `easytier-v2.6.4-source.tar.gz` منتشر می‌شود.
+
+## استفاده
+
+```bash
 sudo easymesh
+easymesh --version
 ```
 
-استفاده از EasyTier v2.6.4:
-
-```bash
-sudo easymesh 2.6.4
-sudo easymesh --core v2.6.4
-```
-
-حالت آفلاین سخت‌گیرانه:
-
-```bash
-sudo EASYMESH_OFFLINE=1 easymesh
-sudo EASYMESH_OFFLINE=1 easymesh 2.6.4
-```
-
-## انتخاب امن هسته بر اساس معماری
-
-بسته محلی هسته بر اساس معماری شناسایی‌شده سیستم انتخاب می‌شود:
-
-- `x86_64` یا `amd64`: `easytier-linux-x86_64`
-- `aarch64` یا `arm64`: `easytier-linux-aarch64`
-
-پشتیبانی موجود ARMv7 در صورت وجود باینری محلی متناظر حفظ شده است. معماری ناشناخته با خطای امن متوقف می‌شود و هرگز به بسته x86_64 هدایت نمی‌شود.
-
-اگر نسخه دیگری نصب باشد، اجرای `sudo easymesh 2.6.4` ارتقای فقط هسته را پیشنهاد می‌دهد. پیش از توقف سرویس، هر دو باینری کاندیدا در فایل‌های موقت کپی و برای تطبیق معماری و نسخه اجرا می‌شوند. پس از تأیید، اسکریپت فقط `easytier-core` و `easytier-cli` را پشتیبان‌گیری و جایگزین می‌کند؛ فایل موجود `easymesh.service`، مقدار `ExecStart` و تنظیمات شبکه بدون تغییر می‌مانند. در صورت شکست نصب یا راه‌اندازی سرویس، نسخه پشتیبان به‌صورت خودکار بازیابی می‌شود.
-
-## رله و مسیریابی پورت
-
-گزینه `[12] Relay / Port Routing` یک رله اختیاری Dokodemo-Door فراهم می‌کند. کاربر نهایی به 3x-ui، Hiddify Manager یا نصب قبلی Xray نیاز ندارد. Behify یک باینری اختصاصی Xray را دانلود و اجرا می‌کند که از هر Xray مدیریت‌شده توسط پنل روی سرور کاملاً جدا است.
-
-دانلود Xray فقط پس از تأیید صریح کاربر انجام می‌شود. مدیر رله فقط نسخه پایدار، غیر draft و غیر prerelease را از مخزن رسمی GitHub یعنی `XTLS/Xray-core` می‌پذیرد. آرشیو باید دارای SHA-256 رسمی ارائه‌شده توسط GitHub باشد و نبودن یا ناهماهنگی checksum یا نامعتبر بودن مسیرهای آرشیو، نصب را پیش از اجرا یا فعال‌سازی باینری متوقف می‌کند.
-
-حالت‌های رله `tcp`، `udp` و `both` هستند. برای نمونه، یک رله UDP می‌تواند روی پورت عمومی `443` گوش دهد و ترافیک را به آدرس مش EasyTier برابر با `10.144.144.1` و پورت `443` بفرستد:
+خروجی نسخه:
 
 ```text
-Name: mesh-udp-443
-Protocol: udp
-Listen address: 0.0.0.0
-Listen port: 443
-Destination IP: 10.144.144.1
-Destination port: 443
+Behify EasyMesh v1.0.0-rc.1
+EasyTier v2.6.4
 ```
 
-مسیرهای اختصاصی رله:
+باز کردن منو هیچ دانلود، نصب یا جایگزینی EasyTier انجام نمی‌دهد. گزینه **Connect to the Mesh Network** تنظیمات mesh را ایجاد یا جایگزین می‌کند.
 
-```text
-/opt/behify-easymesh/relay/bin/behify-relayd
-/opt/behify-easymesh/relay/releases/<release-id>/behify-relayd
-/etc/behify-easymesh/relay/relays.json
-/etc/behify-easymesh/relay/config.json
-/etc/systemd/system/behify-relay.service
+EasyTier ابتدا اتصال مستقیم/P2P را تلاش می‌کند. اگر مسیر مستقیم در دسترس نباشد ممکن است از relay یا multi-hop بین peerها استفاده کند؛ بنابراین مسیری مانند `Iran1 -> Iran2 -> destination` می‌تواند به عنوان fallback رخ دهد. نسخه 1.0.0-rc.1 این رفتار تست‌شده را تغییر نمی‌دهد و نقش endpoint-only یا relay اختصاصی تحمیل نمی‌کند.
+
+## مسیرها و سرویس‌ها
+
+| کاربرد | مسیر یا سرویس |
+| --- | --- |
+| برنامه | `/opt/behify-easymesh` |
+| فرمان عمومی | `/usr/local/bin/easymesh` |
+| EasyTier | `/root/easytier/easytier-core` و `/root/easytier/easytier-cli` |
+| سرویس mesh | `/etc/systemd/system/easymesh.service` |
+| تنظیمات محرمانه mesh | `/etc/behify-easymesh/mesh.env` |
+| backup تنظیمات | `/etc/behify-easymesh/backups/` |
+| backup نصب | `/opt/behify-easymesh-backups/` |
+| watchdog | `easymesh-watchdog.service` |
+
+فایل `mesh.env` با دسترسی `0600` ذخیره می‌شود و secret داخل unit عمومی systemd نوشته نمی‌شود. تنظیمات جدید ابتدا stage و validate می‌شوند و در صورت خطا فایل‌ها و وضعیت قبلی سرویس برگردانده می‌شوند.
+
+## Upgrade و Rollback
+
+پیش از upgrade نصب‌های قدیمی‌تر از v1 فقط مسیرهای legacy زیر را بررسی کنید:
+
+```bash
+sudo test ! -e /root/easytier/reset.sh || sudo stat /root/easytier/reset.sh
+sudo crontab -l 2>/dev/null | grep -F '/root/easytier/reset.sh' || true
 ```
 
-فایل دانلودشده همچنان باینری رسمی XTLS/Xray-core است و تمام بررسی‌های نسخه پایدار، معماری، مسیرهای آرشیو و SHA-256 حفظ می‌شوند. پس از استخراج، باینری فقط با نام خنثی `behify-relayd` آماده و اجرا می‌شود و سرویس رله هیچ فایلی با basename برابر `xray` اجرا نمی‌کند.
+اگر این script یا cron متناظر وجود داشته باشد، نصب‌کننده RC پیش از هر تغییر متوقف می‌شود. بدون مجوز عملیاتی جداگانه آن‌ها را اجرا یا حذف نکنید؛ upgrade بدون نظارت برای این نصب‌ها پشتیبانی نمی‌شود.
 
-نصب مجدد، باینری معتبر قدیمی در مسیر `/opt/behify-easymesh/relay/xray/current/xray` را بدون دسترسی شبکه یا دانلود دوباره به runtime جدید منتقل می‌کند. تعریف‌ها، تنظیمات تولیدشده، نسخه Xray و وضعیت active/enabled سرویس حفظ می‌شوند. در صورت شکست، runtime، unit، drop-in آزمایشی شناخته‌شده و وضعیت قبلی سرویس بازیابی می‌شوند. drop-in موقت فقط در صورت تطبیق کامل با workaround شناخته‌شده Behify حذف می‌شود و drop-inهای ناشناس مدیر سیستم باقی می‌مانند.
+برای upgrade همان بسته Release تاییدشده را نصب کنید. هر runtime غیر از جفت معتبر v2.6.4 به صورت عمومی unsupported در نظر گرفته می‌شود؛ فایل‌های قبلی backup، هر دو binary جدید stage و validate، و سپس با توقف کنترل‌شده سرویس جایگزین می‌شوند.
 
-تداخل پورت‌های TCP و UDP به‌صورت جداگانه با `ss` بررسی می‌شود. پورت‌های حساس مانند پورت SSH یعنی `22` هشدار تأیید جداگانه دارند. بررسی مسیر EasyTier فقط هشداردهنده است؛ ناموفق بودن این بررسی تنظیمات موجود رله را بازنویسی یا حذف نمی‌کند.
+وضعیت active/enabled قبلی حفظ می‌شود. نصب‌کننده سرویس inactive را start و سرویس disabled را enable نمی‌کند. خطای activation یا اعتبارسنجی سرویس باعث بازگردانی برنامه، هر دو binary، مسیر command و وضعیت قبلی می‌شود.
 
-در هر تغییر، از فایل‌های فعلی رله پشتیبان گرفته می‌شود، JSON موقت تولید و اعتبارسنجی می‌شود و تنظیمات با باینری اختصاصی Xray آزمایش می‌شوند. سپس فایل‌ها به‌صورت اتمیک جایگزین می‌شوند و فقط `behify-relay.service` راه‌اندازی مجدد می‌شود. اگر اعتبارسنجی، نصب یا اجرای سرویس ناموفق باشد، تنظیمات قبلی رله به‌صورت خودکار بازیابی می‌شود. سرویس رله از `Wants=easymesh.service` استفاده می‌کند و هیچ IP، secret، peer یا تنظیمات `ExecStart` مربوط به مش را در خود ندارد و تغییر نمی‌دهد.
+## حذف معمولی و Purge
 
-پس از حذف آخرین رله فعال، تنظیمات خالی اعتبارسنجی‌شده نگه‌داری می‌شود و `behify-relay.service` متوقف و غیرفعال می‌شود. مدیر رله نصب باقی می‌ماند تا در آینده بتوان رله جدیدی اضافه کرد.
+حذف معمولی فایل‌های تاییدشده متعلق به Behify را حذف می‌کند اما تنظیمات، unitها، backupها و رله ایزوله را نگه می‌دارد:
 
-بررسی نسخه هسته نصب‌شده/در حال اجرا:
+```bash
+sudo /opt/behify-easymesh/uninstall.sh
+```
+
+Purge نیازمند تایپ `PURGE` است و تنظیمات mesh، unitهای متعلق به Behify و backupهای mesh را نیز حذف می‌کند:
+
+```bash
+sudo /opt/behify-easymesh/uninstall.sh --purge
+```
+
+فایل ناشناس در `/usr/local/bin/easymesh`، unit ناشناس، EasyTier غیرمتعلق، Xray سیستمی، x-ui/3x-ui و Hiddify حذف نمی‌شوند. رله فقط از منوی خودش حذف می‌شود.
+
+## رله ایزوله
+
+گزینه **Relay / Port Routing** یک Xray Dokodemo-Door اختصاصی را مدیریت می‌کند. کاربر به 3x-ui، x-ui، Hiddify Manager یا Xray از پیش نصب‌شده نیاز ندارد.
+
+- runtime: `/opt/behify-easymesh/relay/`
+- تعریف رله‌ها: `/etc/behify-easymesh/relay/relays.json`
+- config تولیدشده: `/etc/behify-easymesh/relay/config.json`
+- سرویس: `behify-relay.service`
+- نام process: `behify-relayd`
+
+برای نمونه UDP/443 می‌تواند به `10.144.144.1:443` روی mesh هدایت شود. حالت‌های TCP، UDP و Both پشتیبانی می‌شوند. تعارض port و دسترسی route قبل از activation بررسی و خطای سرویس rollback می‌شود.
+
+این مؤلفه مسیرهای `/etc/xray`، `/usr/local/etc/xray`، سرویس‌های x-ui/3x-ui، Hiddify، `xray.service` یا processهای Xray نامرتبط را کنترل یا تغییر نمی‌دهد.
+
+## بررسی و رفع اشکال
 
 ```bash
 /root/easytier/easytier-core --version
-PID=$(systemctl show -p MainPID --value easymesh.service); sudo /proc/$PID/exe --version
+/root/easytier/easytier-cli --version
+PID=$(systemctl show -p MainPID --value easymesh.service)
+sudo /proc/$PID/exe --version
+systemctl status easymesh.service
+journalctl -u easymesh.service -n 100 --no-pager
 ```
 
-تست بسته آفلاین:
+نمایش Peer و Peer-Center از قالب عادی EasyTier استفاده می‌کند. Routes فقط در صورت پشتیبانی `watch` از حالت no-wrap استفاده می‌کند و در غیر این صورت به wrapping عادی برمی‌گردد.
 
-```bash
-unzip behify-easymesh-test.zip
-cd behify-easymesh-test
-sudo EASYMESH_OFFLINE=1 easymesh
-```
+گزارش‌های smoke-test قبل از v1 برای سابقه در `docs/historical/` قرار دارند و دستور نصب پشتیبانی‌شده نیستند.
 
-بعد از نصب:
-```bash
-sudo easymesh
-```
-هسته آفلاین
-
-فایل‌های هسته EasyTier باید داخل مسیر زیر قرار بگیرند:
-
-core/v2.0.3/
-
-نسخه پیش‌فرض انتخاب‌شده هسته `v2.0.3` است و همین نسخه فعلا smoke-test شده است.
-
-بسته‌های محلی `v2.6.4` برای x86_64 و aarch64 در مسیر زیر قرار دارند:
-
-core/v2.6.4/
-
-گزینه‌های پیشرفته زیر فقط برای تست پایداری آینده مستند شده‌اند و به صورت پیش‌فرض فعال نیستند:
-
-```text
---enable-kcp-proxy
---enable-quic-proxy
---compression zstd
---multi-thread
-```
-
-## بهبود رابط و ایمنی اجرا
-
-در افزودن رله، `tcp` حالت پیش‌فرض است. حالت `udp` فقط UDP را مستقیم عبور می‌دهد و حالت `both` دو listener جداگانه TCP و UDP روی یک شماره پورت می‌سازد. پیش از ذخیره، خلاصه تنظیمات نمایش داده می‌شود و در صورت نیاز به Xray ایزوله، دانلود فقط پس از تأیید صریح انجام می‌شود. پس از راه‌اندازی سرویس، همه socketهای درخواستی بررسی می‌شوند و نتیجه موفق، لغو، خطای اعتبارسنجی یا rollback به‌طور واضح نمایش داده می‌شود.
-
-داشبورد رله فقط وضعیت محلی Xray، تعداد رله‌ها و وضعیت سرویس را نشان می‌دهد و هنگام باز شدن منو هیچ درخواست GitHub انجام نمی‌دهد. بررسی شبکه فقط با انتخاب نصب یا به‌روزرسانی Xray انجام می‌شود. نصب مجدد بسته، تعریف رله‌ها، فایل تنظیمات تولیدشده، Xray ایزوله و وضعیت `behify-relay.service` را حفظ می‌کند.
-
-منوی اصلی فقط نسخه هسته و وضعیت سرویس را به‌صورت خلاصه نمایش می‌دهد. گزینه `[13] Diagnostics` جزئیات معماری، نسخه‌های پیش‌فرض، انتخاب‌شده، نصب‌شده و در حال اجرا، PID، مسیر فایل‌های اجرایی و تعداد restart را نمایش می‌دهد. نمایش peer و route فقط در صورت پشتیبانی باینری از `--no-trunc` استفاده می‌کند تا سازگاری با v2.0.3 حفظ شود.
-
-حذف هسته، سرویس و مؤلفه رله به تأیید صریح `y` نیاز دارد. برای watchdog نیز IP مقصد و بازه عددی آستانه تأخیر و فاصله بررسی، پیش از نوشتن اسکریپت root اعتبارسنجی می‌شوند.
-
-## Attribution
-
-Based on Easy-Mesh by Musixal. LICENSE and NOTICE retained.
+برای گزارش خصوصی آسیب‌پذیری، `SECURITY.md` را ببینید و secret یا credential واقعی را در issue عمومی قرار ندهید.

@@ -2,7 +2,7 @@
 
 All notable changes to Behify EasyMesh are documented here.
 
-## [1.0.0] - Unreleased
+## [1.0.0-rc.1] - 2026-09-04
 
 ### Added
 
