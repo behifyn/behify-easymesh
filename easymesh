@@ -7,41 +7,38 @@ WHITE="\033[1;37m"
 RESET="\033[0m"
 MAGENTA="\033[0;35m"
 
-DEFAULT_CORE_VERSION="v2.0.3"
-CORE_VERSION="${EASYMESH_CORE_VERSION:-$DEFAULT_CORE_VERSION}"
-CORE_VERSION_EXPLICIT=0
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+VERSION_FILE="$SCRIPT_DIR/versions.env"
+RUNTIME_MANIFEST="$SCRIPT_DIR/manifest.txt"
+
+if [[ ! -r "$VERSION_FILE" ]]; then
+    printf 'Behify EasyMesh version metadata is missing: %s\n' "$VERSION_FILE" >&2
+    exit 1
+fi
+
+# shellcheck source=versions.env
+. "$VERSION_FILE"
+if [[ ! "$BEHIFY_EASYMESH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] || \
+   [[ ! "$EASYTIER_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'Behify EasyMesh version metadata is invalid.\n' >&2
+    exit 1
+fi
+readonly BEHIFY_EASYMESH_VERSION EASYTIER_VERSION
+EASYTIER_VERSION_NUMBER="${EASYTIER_VERSION#v}"
 
 show_usage() {
     printf '%s\n' \
         "Usage:" \
         "  sudo easymesh" \
-        "  sudo easymesh 2.6.4" \
-        "  sudo easymesh --core v2.6.4" \
-        "" \
-        "Environment:" \
-        "  EASYMESH_OFFLINE=1" \
-        "  EASYMESH_CORE_VERSION=v2.6.4" \
+        "  sudo easymesh --version" \
         "" \
         "Notes:" \
-        "  Default core remains v2.0.3." \
-        "  v2.6.4 can be selected explicitly for testing." \
+        "  EasyTier v2.6.4 is the only supported runtime." \
+        "  Runtime installation and upgrades are handled by install.sh." \
         "" \
         "Runtime checks:" \
         "  /root/easytier/easytier-core --version" \
         "  PID=\$(systemctl show -p MainPID --value easymesh.service); sudo /proc/\$PID/exe --version"
-}
-
-normalize_core_version() {
-    local version="$1"
-    if [[ "$version" == v* ]]; then
-        printf '%s\n' "$version"
-    else
-        printf 'v%s\n' "$version"
-    fi
-}
-
-is_core_version_arg() {
-    [[ "$1" =~ ^v?[0-9]+(\.[0-9]+){2}$ ]]
 }
 
 if [[ $# -gt 0 ]]; then
@@ -50,28 +47,24 @@ if [[ $# -gt 0 ]]; then
             show_usage
             exit 0
             ;;
-        --core)
-            if [[ -z "$2" || $# -gt 2 ]] || ! is_core_version_arg "$2"; then
+        --version)
+            [[ $# -eq 1 ]] || {
                 show_usage
                 exit 1
-            fi
-            CORE_VERSION="$(normalize_core_version "$2")"
-            CORE_VERSION_EXPLICIT=1
+            }
+            printf 'Behify EasyMesh v%s\n' "$BEHIFY_EASYMESH_VERSION"
+            printf 'EasyTier %s\n' "$EASYTIER_VERSION"
+            exit 0
             ;;
         *)
-            if [[ $# -eq 1 ]] && is_core_version_arg "$1"; then
-                CORE_VERSION="$(normalize_core_version "$1")"
-                CORE_VERSION_EXPLICIT=1
-            else
-                show_usage
-                exit 1
-            fi
+            show_usage
+            exit 1
             ;;
     esac
 fi
 
 # Check if the script is run as root
-if [[ $EUID -ne 0 ]]; then
+if [[ "${EASYMESH_SOURCE_ONLY:-0}" != "1" && $EUID -ne 0 ]]; then
    echo "This script must be run as root"
    sleep 1
    exit 1
@@ -130,12 +123,6 @@ colorize() {
     echo -e "${style_code}${color_code}${text}${reset}"
 }
 
-is_arm_hard_float() {
-    ldd /bin/ls 2>/dev/null | grep -qi 'armhf' || \
-        [ -e /lib/ld-linux-armhf.so.3 ] || \
-        [ -e /lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 ]
-}
-
 resolve_core_arch_directory() {
     local arch="${1:-$(uname -m)}"
 
@@ -146,16 +133,19 @@ resolve_core_arch_directory() {
         aarch64|arm64)
             printf 'easytier-linux-aarch64\n'
             ;;
-        armv7l)
-            if is_arm_hard_float; then
-                printf 'easytier-linux-armv7hf\n'
-            else
-                printf 'easytier-linux-armv7\n'
-            fi
-            ;;
         *)
             return 1
             ;;
+    esac
+}
+
+resolve_release_architecture() {
+    local arch="${1:-$(uname -m)}"
+
+    case "$arch" in
+        x86_64|amd64) printf 'x86_64\n' ;;
+        aarch64|arm64) printf 'aarch64\n' ;;
+        *) return 1 ;;
     esac
 }
 
@@ -166,320 +156,64 @@ get_binary_version_number() {
     "$binary" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
 }
 
-validate_local_core_candidate() {
-    local candidate_dir="$1"
-    local system_arch="$2"
-    local temp_dir temp_core temp_cli core_output cli_output core_version cli_version
-    local selected_number="${CORE_VERSION#v}"
+manifest_value() {
+    local key="$1"
 
-    if [[ ! -f "$candidate_dir/easytier-core" || ! -f "$candidate_dir/easytier-cli" ]]; then
-        return 1
-    fi
-
-    temp_dir=$(mktemp -d) || return 1
-    temp_core="$temp_dir/easytier-core"
-    temp_cli="$temp_dir/easytier-cli"
-
-    if ! cp "$candidate_dir/easytier-core" "$temp_core" || \
-       ! cp "$candidate_dir/easytier-cli" "$temp_cli" || \
-       ! chmod +x "$temp_core" "$temp_cli"; then
-        rm -rf "$temp_dir"
-        return 1
-    fi
-
-    core_output=$("$temp_core" --version 2>&1)
-    if [[ $? -ne 0 ]]; then
-        colorize red "Local EasyTier core candidate cannot execute." bold
-        colorize red "Detected architecture: $system_arch" bold
-        colorize red "Selected package: $candidate_dir" bold
-        colorize red "$core_output" bold
-        rm -rf "$temp_dir"
-        return 2
-    fi
-
-    cli_output=$("$temp_cli" --version 2>&1)
-    if [[ $? -ne 0 ]]; then
-        colorize red "Local EasyTier CLI candidate cannot execute." bold
-        colorize red "Detected architecture: $system_arch" bold
-        colorize red "Selected package: $candidate_dir" bold
-        colorize red "$cli_output" bold
-        rm -rf "$temp_dir"
-        return 2
-    fi
-
-    core_version=$(printf '%s\n' "$core_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
-    cli_version=$(printf '%s\n' "$cli_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
-    if [[ "$core_version" != "$selected_number" || "$cli_version" != "$selected_number" ]]; then
-        colorize red "Local core package version does not match selected core $CORE_VERSION." bold
-        colorize red "Detected architecture: $system_arch" bold
-        colorize red "Selected package: $candidate_dir" bold
-        colorize red "Candidate versions: core=${core_version:-unknown}, cli=${cli_version:-unknown}" bold
-        rm -rf "$temp_dir"
-        return 2
-    fi
-
-    VALIDATED_CORE="$temp_core"
-    VALIDATED_CLI="$temp_cli"
-    VALIDATED_TEMP_DIR="$temp_dir"
-    return 0
+    [[ -f "$RUNTIME_MANIFEST" ]] || return 1
+    awk -F= -v key="$key" '$1 == key { count++; value=substr($0, index($0, "=") + 1) } END { if (count != 1) exit 1; print value }' "$RUNTIME_MANIFEST"
 }
 
-install_validated_core_files() {
-    local dest_dir="$1"
-    local staged_core="$dest_dir/.easytier-core.new.$$"
-    local staged_cli="$dest_dir/.easytier-cli.new.$$"
+verify_installed_runtime() {
+    local architecture manifest_arch core_hash cli_hash actual_core_hash actual_cli_hash
+    local core_version cli_version
 
-    mkdir -p "$dest_dir" || return 1
-    install -m 0755 "$VALIDATED_CORE" "$staged_core" || return 1
-    install -m 0755 "$VALIDATED_CLI" "$staged_cli" || {
-        rm -f "$staged_core"
+    for required_command in uname awk sha256sum systemctl; do
+        command -v "$required_command" >/dev/null 2>&1 || {
+            printf 'Required command is missing: %s. Install it with your operating system package manager.\n' "$required_command" >&2
+            return 1
+        }
+    done
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        printf 'Unsupported operating system: %s. Behify EasyMesh v1 supports Linux only.\n' "$(uname -s)" >&2
+        return 1
+    fi
+    if ! architecture=$(resolve_release_architecture); then
+        printf 'Unsupported architecture: %s. Behify EasyMesh v1 supports only x86_64 and aarch64.\n' "$(uname -m)" >&2
+        return 1
+    fi
+    if [[ ! -f /root/easytier/easytier-core || -L /root/easytier/easytier-core || ! -x /root/easytier/easytier-core ||
+          ! -f /root/easytier/easytier-cli || -L /root/easytier/easytier-cli || ! -x /root/easytier/easytier-cli ]]; then
+        printf 'EasyTier v2.6.4 is not installed. Run the verified Behify EasyMesh installer.\n' >&2
+        return 1
+    fi
+    if [[ ! -f "$RUNTIME_MANIFEST" ]]; then
+        printf 'Runtime manifest is missing: %s. Reinstall from a verified release package.\n' "$RUNTIME_MANIFEST" >&2
+        return 1
+    fi
+
+    manifest_arch=$(manifest_value architecture) || return 1
+    core_hash=$(manifest_value easytier_core_sha256) || return 1
+    cli_hash=$(manifest_value easytier_cli_sha256) || return 1
+    [[ "$manifest_arch" == "$architecture" ]] || {
+        printf 'Installed package architecture mismatch: expected %s, found %s.\n' "$architecture" "$manifest_arch" >&2
         return 1
     }
-    if ! mv -f "$staged_core" "$dest_dir/easytier-core"; then
-        rm -f "$staged_core" "$staged_cli"
+    [[ "$core_hash" =~ ^[0-9a-f]{64}$ && "$cli_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+    actual_core_hash=$(sha256sum /root/easytier/easytier-core | awk '{print $1}') || return 1
+    actual_cli_hash=$(sha256sum /root/easytier/easytier-cli | awk '{print $1}') || return 1
+    [[ "$actual_core_hash" == "$core_hash" && "$actual_cli_hash" == "$cli_hash" ]] || {
+        printf 'Installed EasyTier files do not match the verified package manifest. Reinstall before continuing.\n' >&2
         return 1
-    fi
-    if ! mv -f "$staged_cli" "$dest_dir/easytier-cli"; then
-        rm -f "$staged_cli"
+    }
+
+    core_version=$(get_binary_version_number /root/easytier/easytier-core) || return 1
+    cli_version=$(get_binary_version_number /root/easytier/easytier-cli) || return 1
+    [[ "$core_version" == "$EASYTIER_VERSION_NUMBER" && "$cli_version" == "$EASYTIER_VERSION_NUMBER" ]] || {
+        printf 'Unsupported EasyTier runtime. Required: %s; core: %s; cli: %s.\n' \
+            "$EASYTIER_VERSION" "${core_version:-unknown}" "${cli_version:-unknown}" >&2
         return 1
-    fi
+    }
 }
-
-restore_core_backup() {
-    local backup_dir="$1"
-    local service_file="$2"
-    local service_was_active="$3"
-    local restore_core="/root/easytier/.easytier-core.rollback.$$"
-    local restore_cli="/root/easytier/.easytier-cli.rollback.$$"
-
-    systemctl stop easymesh.service &>/dev/null || true
-
-    if install -m 0755 "$backup_dir/easytier-core" "$restore_core" && \
-       install -m 0755 "$backup_dir/easytier-cli" "$restore_cli" && \
-       mv -f "$restore_core" /root/easytier/easytier-core && \
-       mv -f "$restore_cli" /root/easytier/easytier-cli; then
-        if [[ "$service_was_active" == "1" && -f "$service_file" ]]; then
-            if systemctl start easymesh.service; then
-                colorize green "Rollback completed and the previous service was restarted." bold
-            else
-                colorize red "Binaries were restored, but the previous service could not be restarted." bold
-            fi
-        else
-            colorize green "Rollback completed. Previous core binaries were restored." bold
-        fi
-        return 0
-    fi
-
-    rm -f "$restore_core" "$restore_cli"
-    colorize red "Automatic rollback failed. Backup retained at: $backup_dir" bold
-    return 1
-}
-
-upgrade_installed_core() {
-    local candidate_dir="$1"
-    local system_arch="$2"
-    local dest_dir="/root/easytier"
-    local service_file="/etc/systemd/system/easymesh.service"
-    local selected_number="${CORE_VERSION#v}"
-    local installed_core installed_cli backup_dir service_was_active=0 pid running_version
-
-    installed_core=$(get_binary_version_number "$dest_dir/easytier-core" || true)
-    installed_cli=$(get_binary_version_number "$dest_dir/easytier-cli" || true)
-
-    if [[ "$installed_core" == "$selected_number" && "$installed_cli" == "$selected_number" ]]; then
-        colorize green "Selected EasyMesh Core is already installed ($CORE_VERSION)." bold
-        return 0
-    fi
-
-    colorize yellow "Installed Core: ${installed_core:-unknown}" bold
-    colorize yellow "Selected Core: $CORE_VERSION" bold
-    colorize yellow "Detected architecture: $system_arch" bold
-    read -r -p "Upgrade the installed core to $CORE_VERSION? [y/N] " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        colorize yellow "Core upgrade cancelled. Existing installation was not changed." bold
-        return 0
-    fi
-
-    validate_local_core_candidate "$candidate_dir" "$system_arch"
-    case $? in
-        0) ;;
-        1)
-            colorize red "Local core package is incomplete: $candidate_dir" bold
-            return 1
-            ;;
-        *) return 1 ;;
-    esac
-
-    if [[ ! -f "$dest_dir/easytier-core" || ! -f "$dest_dir/easytier-cli" ]]; then
-        colorize red "Safe upgrade requires both installed binaries so they can be backed up." bold
-        rm -rf "$VALIDATED_TEMP_DIR"
-        return 1
-    fi
-
-    backup_dir="/root/easymesh-core-backup-$(date +%Y%m%d-%H%M%S)"
-    if [[ -e "$backup_dir" ]] || ! mkdir "$backup_dir" || \
-       ! cp "$dest_dir/easytier-core" "$backup_dir/easytier-core" || \
-       ! cp "$dest_dir/easytier-cli" "$backup_dir/easytier-cli"; then
-        colorize red "Could not create a complete core backup. Upgrade aborted." bold
-        rm -rf "$VALIDATED_TEMP_DIR"
-        return 1
-    fi
-
-    if [[ -f "$service_file" ]] && systemctl is-active --quiet easymesh.service; then
-        service_was_active=1
-    fi
-
-    if [[ "$service_was_active" == "1" ]] && ! systemctl stop easymesh.service; then
-        colorize red "Could not stop easymesh.service. Installed core was not changed." bold
-        rm -rf "$VALIDATED_TEMP_DIR"
-        return 1
-    fi
-
-    if ! install_validated_core_files "$dest_dir" || \
-       [[ "$(get_binary_version_number "$dest_dir/easytier-core" || true)" != "$selected_number" ]] || \
-       [[ "$(get_binary_version_number "$dest_dir/easytier-cli" || true)" != "$selected_number" ]]; then
-        colorize red "Core installation verification failed. Restoring the previous binaries." bold
-        rm -rf "$VALIDATED_TEMP_DIR"
-        restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
-        return 1
-    fi
-    rm -rf "$VALIDATED_TEMP_DIR"
-
-    if [[ -f "$service_file" ]]; then
-        if ! systemctl start easymesh.service || ! systemctl is-active --quiet easymesh.service; then
-            colorize red "The existing service failed to start with the selected core. Rolling back." bold
-            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
-            return 1
-        fi
-
-        pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null)
-        if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
-            colorize red "The service has no valid running PID after upgrade. Rolling back." bold
-            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
-            return 1
-        fi
-        running_version=$(get_binary_version_number "/proc/$pid/exe" || true)
-        if [[ "$running_version" != "$selected_number" ]]; then
-            colorize red "Running core version verification failed. Rolling back." bold
-            restore_core_backup "$backup_dir" "$service_file" "$service_was_active"
-            return 1
-        fi
-    fi
-
-    colorize green "EasyMesh Core upgraded safely to $CORE_VERSION." bold
-    colorize green "Backup: $backup_dir" bold
-    if [[ -f "$service_file" ]]; then
-        colorize green "Service Status: $(systemctl is-active easymesh.service 2>/dev/null || true)" bold
-    else
-        colorize green "Service Status: missing" bold
-    fi
-    return 0
-}
-
-install_easytier() {
-    local DEST_DIR="/root/easytier"
-    local FILE1="easytier-core"
-    local FILE2="easytier-cli"
-    local SCRIPT_DIR LOCAL_CORE_BASE ARCH LOCAL_ARCH_DIR LOCAL_CORE_DIR LOCAL_CORE LOCAL_CLI URL
-    local validation_status
-
-    SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-    LOCAL_CORE_BASE="$SCRIPT_DIR/core/$CORE_VERSION"
-    #URL_X86="https://github.com/EasyTier/EasyTier/releases/download/v1.1.0/easytier-x86_64-unknown-linux-musl-v1.1.0.zip"
-    #URL_ARM_SOFT="https://github.com/EasyTier/EasyTier/releases/download/v1.1.0/easytier-armv7-unknown-linux-musleabi-v1.1.0.zip"              
-    #URL_ARM_HARD="https://github.com/EasyTier/EasyTier/releases/download/v1.1.0/easytier-armv7-unknown-linux-musleabihf-v1.1.0.zip"
-
-    #New Version
-    URL_X86="https://github.com/Musixal/Easy-Mesh/raw/main/core/v2.0.3/easytier-linux-x86_64/"
-    URL_ARM_SOFT="https://github.com/Musixal/Easy-Mesh/raw/main/core/v2.0.3/easytier-linux-armv7/"              
-    URL_ARM_HARD="https://github.com/Musixal/Easy-Mesh/raw/main/core/v2.0.3/easytier-linux-armv7hf/"
-    
-    ARCH=$(uname -m)
-    if ! LOCAL_ARCH_DIR=$(resolve_core_arch_directory "$ARCH"); then
-        colorize red "Unsupported architecture: $ARCH" bold
-        colorize red "No core package was selected and the installed core was not changed." bold
-        exit 1
-    fi
-    LOCAL_CORE_DIR="$LOCAL_CORE_BASE/$LOCAL_ARCH_DIR"
-    LOCAL_CORE="$LOCAL_CORE_DIR/$FILE1"
-    LOCAL_CLI="$LOCAL_CORE_DIR/$FILE2"
-
-    if [[ "$CORE_VERSION_EXPLICIT" == "1" ]] && \
-       { [[ -e "$DEST_DIR/$FILE1" ]] || [[ -e "$DEST_DIR/$FILE2" ]]; }; then
-        upgrade_installed_core "$LOCAL_CORE_DIR" "$ARCH" || exit 1
-        return 0
-    fi
-
-    if [ -x "$DEST_DIR/$FILE1" ] && [ -x "$DEST_DIR/$FILE2" ]; then
-        colorize green "Behify EasyMesh Core Installed" bold
-        return 0
-    fi
-
-    if [[ "$LOCAL_ARCH_DIR" == "easytier-linux-x86_64" ]]; then
-        URL=$URL_X86
-    elif [[ "$ARCH" == "armv7l" ]]; then
-        if [[ "$LOCAL_ARCH_DIR" == "easytier-linux-armv7hf" ]]; then
-            URL=$URL_ARM_HARD
-        else
-            URL=$URL_ARM_SOFT
-        fi
-    fi
-
-    if [ -f "$LOCAL_CORE" ] && [ -f "$LOCAL_CLI" ]; then
-        validate_local_core_candidate "$LOCAL_CORE_DIR" "$ARCH"
-        validation_status=$?
-        if [[ "$validation_status" == "0" ]] && install_validated_core_files "$DEST_DIR" && \
-           "$DEST_DIR/$FILE1" --version &> /dev/null && "$DEST_DIR/$FILE2" --version &> /dev/null; then
-            rm -rf "$VALIDATED_TEMP_DIR"
-            colorize green "EasyMesh Core installed from local offline package" bold
-            return 0
-        fi
-        [[ -n "$VALIDATED_TEMP_DIR" ]] && rm -rf "$VALIDATED_TEMP_DIR"
-        colorize red "Local EasyMesh Core package is invalid or failed version validation.\n" bold
-        colorize red "Detected architecture: $ARCH" bold
-        colorize red "Selected package: $LOCAL_CORE_DIR" bold
-        if [[ "$validation_status" == "2" ]]; then
-            exit 1
-        fi
-        if [ "$EASYMESH_OFFLINE" = "1" ]; then
-            colorize red "EASYMESH_OFFLINE=1 is set. Download fallback is disabled.\n" bold
-            exit 1
-        fi
-        colorize yellow "Falling back to GitHub download...\n" bold
-    elif [[ "$EASYMESH_OFFLINE" == "1" || "$LOCAL_ARCH_DIR" == "easytier-linux-aarch64" ]]; then
-        colorize red "Local EasyMesh Core package not found for selected core version: $CORE_VERSION\n" bold
-        colorize red "Architecture: $ARCH\n" bold
-        colorize red "Expected path: $LOCAL_CORE_DIR\n" bold
-        if [[ "$EASYMESH_OFFLINE" == "1" ]]; then
-            colorize red "EASYMESH_OFFLINE=1 is set. Download fallback is disabled.\n" bold
-        else
-            colorize red "No compatible aarch64 download fallback is configured.\n" bold
-        fi
-        exit 1
-    fi
-
-    mkdir -p $DEST_DIR &> /dev/null
-    colorize yellow "Downloading Behify EasyMesh Core...\n"
-    curl -Ls "$URL/easytier-cli" -o "$DEST_DIR/easytier-cli"
-    curl -Ls "$URL/easytier-core" -o "$DEST_DIR/easytier-core"
-
-
-    if [ -f "$DEST_DIR/$FILE1" ] && [ -f "$DEST_DIR/$FILE2" ]; then
-    	chmod +x "$DEST_DIR/easytier-cli"
-    	chmod +x "$DEST_DIR/easytier-core"
-        colorize green "Behify EasyMesh Core Installed Successfully...\n" bold
-        sleep 1
-        return 0
-    else
-        colorize red "Failed to install Behify EasyMesh Core...\n" bold
-        exit 1
-    fi
-}
-
-
-
-# Call the function
-install_easytier
 
 generate_random_secret() {
     openssl rand -hex 6
@@ -488,159 +222,308 @@ generate_random_secret() {
 #Var
 EASY_CLIENT='/root/easytier/easytier-cli'
 SERVICE_FILE="/etc/systemd/system/easymesh.service"
+MESH_CONFIG_DIR="/etc/behify-easymesh"
+MESH_ENV_FILE="$MESH_CONFIG_DIR/mesh.env"
 MAIN_CORE_VERSION=""
-    
-connect_network_pool(){
-	clear
-	colorize cyan "Connect to the Mesh Network" bold 
-	echo 
-	colorize yellow "Leave the peer addresses blank to enable reverse mode.
-Ws and wss modes are not recommended for iran's network environment.
-Try disable multi-thread mode if your mesh network is unstable.
-UDP mode is more stable rather than tcp mode.
-	"
-	echo
-    read -p "[-] Enter Peer IPv4/IPv6 Addresses (separate multiple addresses by ','): " PEER_ADDRESSES
-    
-    read -p "[*] Enter Local IPv4 Address (e.g., 10.144.144.1): " IP_ADDRESS
-    if [ -z $IP_ADDRESS ]; then
-    	colorize red "Null value. aborting..."
-    	sleep 2
-    	return 1
-    fi
-    
-    read -r -p "[*] Enter Hostname (e.g., Hetnzer): " HOSTNAME
-    if [ -z $HOSTNAME ]; then
-    	colorize red "Null value. aborting..."
-    	sleep 2
-    	return 1
-    fi
-    
-    read -p "[-] Enter Tunnel Port (Default 2090): " PORT
-    if [ -z $PORT ]; then
-    	colorize red "Default port is 2090..."
-    	PORT='2090'
-    fi
-    
-	echo ''
-    NETWORK_SECRET=$(generate_random_secret)
-    colorize cyan "[✓] Generated Network Secret: $NETWORK_SECRET" bold
-    while true; do
-    read -p "[*] Enter Network Secret (recommend using a strong password): " NETWORK_SECRET
-    if [[ -n $NETWORK_SECRET ]]; then
-        break
-    else
-        colorize red "Network secret cannot be empty. Please enter a valid secret.\n"
-    fi
-	done
-	
-	
 
-	echo ''
-    colorize green "[-] Select Default Protocol:" bold
-    echo "1) tcp"
-    echo "2) udp"
-    echo "3) ws"
-    echo "4) wss"
-    read -p "[*] Select your desired protocol (e.g., 1 for tcp): " PROTOCOL_CHOICE
-	
-    case $PROTOCOL_CHOICE in
-        1) DEFAULT_PROTOCOL="tcp" ;;
-        2) DEFAULT_PROTOCOL="udp" ;;
-        3) DEFAULT_PROTOCOL="ws" ;;
-        4) DEFAULT_PROTOCOL="wss" ;;
-        *) colorize red "Invalid choice. Defaulting to tcp." ; DEFAULT_PROTOCOL="tcp" ;;
-    esac
-	
-	echo 
-	read -p "[-] Enable encryption? (yes/no): " ENCRYPTION_CHOICE
-	case $ENCRYPTION_CHOICE in
-        [Nn]*)
-        	ENCRYPTION_OPTION="--disable-encryption"
-        	colorize yellow "Encryption is disabled"
-       		 ;;
-   		*)
-       		ENCRYPTION_OPTION=""
-       		colorize yellow "Encryption is enabled"
-             ;;
-	esac
-	
-	echo
-	
-	read -p "[-] Enable multi-thread? (yes/no): " MULTI_THREAD
-	case $MULTI_THREAD in
-        [Nn]*)
-        	MULTI_THREAD=""
-        	colorize yellow "Multi-thread is disabled"
-       		 ;;
-   		*)
-       		MULTI_THREAD="--multi-thread"
-       		colorize yellow "Multi-thread is enabled"
-             ;;
-	esac
-	
-	echo
-	
-	read -p "[-] Enable IPv6? (yes/no): " IPV6_MODE
-	case $IPV6_MODE in
-        [Nn]*)
-        	IPV6_MODE="--disable-ipv6"
-        	colorize yellow "IPv6 is disabled"
-       		 ;;
-   		*)
-       		IPV6_MODE=""
-       		colorize yellow "IPv6 is enabled"
-             ;;
-	esac
-	
-	echo
-    
-    IFS=',' read -ra ADDR_ARRAY <<< "$PEER_ADDRESSES"
-    PROCESSED_ADDRESSES=()
-    for ADDRESS in "${ADDR_ARRAY[@]}"; do
-        ADDRESS=$(echo $ADDRESS | xargs)
-        
-        if [[ "$ADDRESS" == *:* ]]; then
-            if [[ "$ADDRESS" != \[*\] ]]; then
-                ADDRESS="[$ADDRESS]"
-            fi
+is_valid_ip_address() {
+    command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$1" >/dev/null 2>&1
+}
+
+is_valid_hostname() {
+    local value="$1"
+
+    [[ ${#value} -ge 1 && ${#value} -le 253 ]] &&
+        [[ "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]]
+}
+
+is_valid_network_secret() {
+    local value="$1"
+
+    [[ ${#value} -ge 12 && ${#value} -le 128 ]] &&
+        [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._~@+=,:/-]*$ ]]
+}
+
+trim_ascii_space() {
+    local value="$1"
+
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s\n' "$value"
+}
+
+build_peer_arguments() {
+    local raw_addresses="$1" protocol="$2" port="$3"
+    local address formatted
+    local -a addresses processed
+
+    PEER_ARGUMENTS=""
+    [[ -n "$raw_addresses" ]] || return 0
+    [[ ${#raw_addresses} -le 4096 ]] || return 1
+    IFS=',' read -r -a addresses <<< "$raw_addresses"
+    [[ ${#addresses[@]} -le 64 ]] || return 1
+    for address in "${addresses[@]}"; do
+        address=$(trim_ascii_space "$address")
+        [[ -n "$address" ]] || return 1
+        if [[ "$address" == \[*\] ]]; then
+            address="${address:1:${#address}-2}"
         fi
-    
-        if [ ! -z "$ADDRESS" ]; then
-            PROCESSED_ADDRESSES+=("${DEFAULT_PROTOCOL}://${ADDRESS}:${PORT}")
+        is_valid_ip_address "$address" || return 1
+        if [[ "$address" == *:* ]]; then
+            formatted="[$address]"
+        else
+            formatted="$address"
         fi
+        processed+=("${protocol}://${formatted}:${port}")
     done
-    
-    JOINED_ADDRESSES=$(IFS=' '; echo "${PROCESSED_ADDRESSES[*]}")
-    
-    if [ ! -z "$JOINED_ADDRESSES" ]; then
-        PEER_ADDRESS="--peers ${JOINED_ADDRESSES}"
-    fi
-    
-    LISTENERS="--listeners ${DEFAULT_PROTOCOL}://[::]:${PORT} ${DEFAULT_PROTOCOL}://0.0.0.0:${PORT}"
-    
-    SERVICE_FILE="/etc/systemd/system/easymesh.service"
-    
-cat > $SERVICE_FILE <<EOF
+    PEER_ARGUMENTS="--peers ${processed[*]}"
+}
+
+write_mesh_environment() {
+    local destination="$1"
+
+    umask 077
+    {
+        printf 'EASYMESH_IP="%s"\n' "$IP_ADDRESS"
+        printf 'EASYMESH_PEERS="%s"\n' "$PEER_ARGUMENTS"
+        printf 'EASYMESH_HOSTNAME="%s"\n' "$HOSTNAME"
+        printf 'EASYMESH_NETWORK_SECRET="%s"\n' "$NETWORK_SECRET"
+        printf 'EASYMESH_DEFAULT_PROTOCOL="%s"\n' "$DEFAULT_PROTOCOL"
+        printf 'EASYMESH_LISTENERS="%s"\n' "$LISTENERS"
+        printf 'EASYMESH_MULTI_THREAD="%s"\n' "$MULTI_THREAD_OPTION"
+        printf 'EASYMESH_ENCRYPTION="%s"\n' "$ENCRYPTION_OPTION"
+        printf 'EASYMESH_IPV6="%s"\n' "$IPV6_OPTION"
+    } > "$destination"
+    chmod 0600 "$destination"
+}
+
+write_mesh_service() {
+    local destination="$1"
+
+    cat > "$destination" <<'EOF'
+# Managed by Behify EasyMesh
 [Unit]
 Description=EasyMesh Network Service
 After=network.target
 
 [Service]
-ExecStart=/root/easytier/easytier-core -i $IP_ADDRESS $PEER_ADDRESS --hostname $HOSTNAME --network-secret $NETWORK_SECRET --default-protocol $DEFAULT_PROTOCOL $LISTENERS $MULTI_THREAD $ENCRYPTION_OPTION $IPV6_MODE
+EnvironmentFile=/etc/behify-easymesh/mesh.env
+ExecStart=/root/easytier/easytier-core -i ${EASYMESH_IP} $EASYMESH_PEERS --hostname ${EASYMESH_HOSTNAME} --network-secret ${EASYMESH_NETWORK_SECRET} --default-protocol ${EASYMESH_DEFAULT_PROTOCOL} $EASYMESH_LISTENERS $EASYMESH_MULTI_THREAD $EASYMESH_ENCRYPTION $EASYMESH_IPV6
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
+    chmod 0644 "$destination"
+}
 
-    # Reload systemd, enable and start the service
-    sudo systemctl daemon-reload &> /dev/null
-    sudo systemctl enable easymesh.service &> /dev/null
-    sudo systemctl start easymesh.service &> /dev/null
+validate_staged_mesh_service() {
+    local staged_service="$1"
 
-    colorize green "Behify EasyMesh Network Service Started.\n" bold
-	press_key
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        systemd-analyze verify "$staged_service" >/dev/null 2>&1
+    else
+        grep -Fqx 'EnvironmentFile=/etc/behify-easymesh/mesh.env' "$staged_service" &&
+            grep -Fqx 'Restart=on-failure' "$staged_service"
+    fi
+}
+
+mesh_configuration_paths_are_safe() {
+    [[ ! -L "$MESH_CONFIG_DIR" && ! -L "$MESH_CONFIG_DIR/backups" &&
+       ! -L "$MESH_ENV_FILE" && ! -L "$SERVICE_FILE" ]] || return 1
+    [[ ! -e "$MESH_CONFIG_DIR" || -d "$MESH_CONFIG_DIR" ]] || return 1
+    [[ ! -e "$MESH_CONFIG_DIR/backups" || -d "$MESH_CONFIG_DIR/backups" ]] || return 1
+    [[ ! -e "$MESH_ENV_FILE" || -f "$MESH_ENV_FILE" ]] || return 1
+    [[ ! -e "$SERVICE_FILE" || -f "$SERVICE_FILE" ]] || return 1
+    [[ ! -f "$SERVICE_FILE" ]] || is_behify_mesh_service_file
+}
+
+restore_mesh_configuration() {
+    local backup_dir="$1" service_existed="$2" env_existed="$3"
+    local was_active="$4" was_enabled="$5"
+
+    systemctl stop easymesh.service >/dev/null 2>&1 || true
+    if [[ "$service_existed" == "1" ]]; then
+        install -m 0644 "$backup_dir/easymesh.service" "$SERVICE_FILE" || return 1
+    else
+        rm -f "$SERVICE_FILE"
+    fi
+    if [[ "$env_existed" == "1" ]]; then
+        install -m 0600 "$backup_dir/mesh.env" "$MESH_ENV_FILE" || return 1
+    else
+        rm -f "$MESH_ENV_FILE"
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || return 1
+    if [[ "$was_enabled" == "1" ]]; then
+        systemctl enable easymesh.service >/dev/null 2>&1 || return 1
+    else
+        systemctl disable easymesh.service >/dev/null 2>&1 || true
+    fi
+    if [[ "$was_active" == "1" ]]; then
+        systemctl start easymesh.service >/dev/null 2>&1 || return 1
+    fi
+}
+
+activate_mesh_configuration() {
+    local staged_env="$1" staged_service="$2"
+    local backup_dir service_existed=0 env_existed=0 was_active=0 was_enabled=0
+    local new_env="$MESH_CONFIG_DIR/.mesh.env.new.$$"
+    local new_service="${SERVICE_FILE}.new.$$"
+
+    mesh_configuration_paths_are_safe || {
+        colorize red "Refusing to replace a symlinked path or an unrecognized easymesh.service." bold
+        return 1
+    }
+    backup_dir=$(mktemp -d "$MESH_CONFIG_DIR/backups/mesh-$(date +%Y%m%d-%H%M%S).XXXXXX") || return 1
+    chmod 0700 "$backup_dir"
+    if [[ -f "$SERVICE_FILE" ]]; then
+        service_existed=1
+        cp -p "$SERVICE_FILE" "$backup_dir/easymesh.service" || return 1
+    fi
+    if [[ -f "$MESH_ENV_FILE" ]]; then
+        env_existed=1
+        cp -p "$MESH_ENV_FILE" "$backup_dir/mesh.env" || return 1
+    fi
+    systemctl is-active --quiet easymesh.service && was_active=1
+    systemctl is-enabled --quiet easymesh.service && was_enabled=1
+
+    if [[ "$was_active" == "1" ]] && ! systemctl stop easymesh.service >/dev/null 2>&1; then
+        colorize red "Could not stop the existing mesh service. Configuration was not changed." bold
+        return 1
+    fi
+
+    if ! install -m 0600 "$staged_env" "$new_env" ||
+       ! install -m 0644 "$staged_service" "$new_service" ||
+       ! mv -f "$new_env" "$MESH_ENV_FILE" ||
+       ! mv -f "$new_service" "$SERVICE_FILE" ||
+       ! systemctl daemon-reload >/dev/null 2>&1 ||
+       ! systemctl enable easymesh.service >/dev/null 2>&1 ||
+       ! systemctl start easymesh.service >/dev/null 2>&1 ||
+       ! systemctl is-active --quiet easymesh.service; then
+        rm -f "$new_env" "$new_service"
+        colorize red "Mesh configuration failed. Restoring the previous configuration and service state." bold
+        if restore_mesh_configuration "$backup_dir" "$service_existed" "$env_existed" "$was_active" "$was_enabled"; then
+            colorize yellow "Previous mesh configuration restored." bold
+        else
+            colorize red "Rollback needs manual attention. Backup: $backup_dir" bold
+        fi
+        return 1
+    fi
+
+    colorize green "Behify EasyMesh Network Service Started." bold
+    colorize green "Configuration backup: $backup_dir" bold
+}
+
+connect_network_pool() {
+    local PEER_ADDRESSES IP_ADDRESS HOSTNAME PORT NETWORK_SECRET generated_secret
+    local PROTOCOL_CHOICE DEFAULT_PROTOCOL ENCRYPTION_CHOICE ENCRYPTION_OPTION
+    local MULTI_THREAD_CHOICE MULTI_THREAD_OPTION IPV6_CHOICE IPV6_OPTION
+    local PEER_ARGUMENTS LISTENERS staging_dir
+
+    clear
+    colorize cyan "Connect to the Mesh Network" bold
+    echo
+    colorize yellow "Leave peer addresses blank to enable reverse mode.
+Ws and wss modes are not recommended for Iran's network environment.
+Try disabling multi-thread mode if your mesh network is unstable.
+UDP mode is generally more stable than TCP in this deployment."
+    echo
+
+    for required_command in python3 openssl; do
+        command -v "$required_command" >/dev/null 2>&1 || {
+            colorize red "$required_command is required for safe mesh configuration." bold
+            press_key
+            return 1
+        }
+    done
+    read -r -p "[-] Enter Peer IPv4/IPv6 Addresses (separate multiple addresses by ','): " PEER_ADDRESSES || return 1
+    read -r -p "[*] Enter Local IPv4/IPv6 Address (e.g., 10.144.144.1): " IP_ADDRESS || return 1
+    is_valid_ip_address "$IP_ADDRESS" || {
+        colorize red "Local address must be a valid IPv4 or IPv6 address." bold
+        press_key
+        return 1
+    }
+    read -r -p "[*] Enter Hostname (e.g., server-1): " HOSTNAME || return 1
+    is_valid_hostname "$HOSTNAME" || {
+        colorize red "Hostname must contain only letters, digits, dots, underscores, or hyphens." bold
+        press_key
+        return 1
+    }
+    read -r -p "[-] Enter Tunnel Port (Default 2090): " PORT || return 1
+    PORT=${PORT:-2090}
+    is_integer_in_range "$PORT" 1 65535 || {
+        colorize red "Tunnel port must be an integer from 1 to 65535." bold
+        press_key
+        return 1
+    }
+
+    generated_secret=$(generate_random_secret) || return 1
+    colorize cyan "A random secret was generated. Press Enter to use it." bold
+    read -r -s -p "[*] Enter Network Secret: " NETWORK_SECRET || return 1
+    printf '\n'
+    NETWORK_SECRET=${NETWORK_SECRET:-$generated_secret}
+    is_valid_network_secret "$NETWORK_SECRET" || {
+        colorize red "Secret must be 12-128 safe characters and start with a letter or digit." bold
+        press_key
+        return 1
+    }
+
+    colorize green "[-] Select Default Protocol:" bold
+    printf '%s\n' '1) tcp' '2) udp' '3) ws' '4) wss'
+    read -r -p "[*] Select your desired protocol (1-4): " PROTOCOL_CHOICE || return 1
+    case "$PROTOCOL_CHOICE" in
+        1) DEFAULT_PROTOCOL="tcp" ;;
+        2) DEFAULT_PROTOCOL="udp" ;;
+        3) DEFAULT_PROTOCOL="ws" ;;
+        4) DEFAULT_PROTOCOL="wss" ;;
+        *) colorize red "Invalid protocol choice." bold; press_key; return 1 ;;
+    esac
+    build_peer_arguments "$PEER_ADDRESSES" "$DEFAULT_PROTOCOL" "$PORT" || {
+        colorize red "Use at most 64 valid IPv4/IPv6 peer addresses (4096 bytes total)." bold
+        press_key
+        return 1
+    }
+
+    read -r -p "[-] Enable encryption? (yes/no): " ENCRYPTION_CHOICE || return 1
+    case "$ENCRYPTION_CHOICE" in
+        [Nn]*) ENCRYPTION_OPTION="--disable-encryption" ;;
+        *) ENCRYPTION_OPTION="" ;;
+    esac
+    read -r -p "[-] Enable multi-thread? (yes/no): " MULTI_THREAD_CHOICE || return 1
+    case "$MULTI_THREAD_CHOICE" in
+        [Nn]*) MULTI_THREAD_OPTION="" ;;
+        *) MULTI_THREAD_OPTION="--multi-thread" ;;
+    esac
+    read -r -p "[-] Enable IPv6? (yes/no): " IPV6_CHOICE || return 1
+    case "$IPV6_CHOICE" in
+        [Nn]*) IPV6_OPTION="--disable-ipv6" ;;
+        *) IPV6_OPTION="" ;;
+    esac
+    LISTENERS="--listeners ${DEFAULT_PROTOCOL}://[::]:${PORT} ${DEFAULT_PROTOCOL}://0.0.0.0:${PORT}"
+
+    mesh_configuration_paths_are_safe || {
+        colorize red "Refusing to use a symlinked configuration path or an unrecognized easymesh.service." bold
+        press_key
+        return 1
+    }
+    mkdir -p "$MESH_CONFIG_DIR" "$MESH_CONFIG_DIR/backups" || return 1
+    chmod 0700 "$MESH_CONFIG_DIR" "$MESH_CONFIG_DIR/backups"
+    staging_dir=$(mktemp -d "$MESH_CONFIG_DIR/.mesh-config.XXXXXX") || return 1
+    if ! write_mesh_environment "$staging_dir/mesh.env" ||
+       ! write_mesh_service "$staging_dir/easymesh.service" ||
+       ! validate_staged_mesh_service "$staging_dir/easymesh.service"; then
+        rm -rf "$staging_dir"
+        colorize red "Generated mesh configuration did not pass validation. Nothing was activated." bold
+        press_key
+        return 1
+    fi
+
+    activate_mesh_configuration "$staging_dir/mesh.env" "$staging_dir/easymesh.service"
+    local result=$?
+    rm -rf "$staging_dir"
+    press_key
+    return "$result"
 }
 
 
@@ -688,7 +571,7 @@ display_peers()
 display_routes(){
 
     is_mesh_cli_ready || return 1
-    colorize yellow "Route output is wide. Use a wide terminal or less -S for best view." bold
+	colorize yellow "Route output is wide; watch no-wrap mode is used when supported." bold
 	watch_mesh_view route
 }
 
@@ -706,7 +589,7 @@ restart_easymesh_service() {
 		return 1
 	fi
     colorize yellow "	Restarting Behify EasyMesh service...\n" bold
-    sudo systemctl restart easymesh.service &> /dev/null
+    systemctl restart easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
         colorize green "	Behify EasyMesh service restarted successfully." bold
     else
@@ -714,6 +597,12 @@ restart_easymesh_service() {
     fi
     echo ''
 	 read -p "	Press Enter to continue..."
+}
+
+is_behify_mesh_service_file() {
+    [[ -f "$SERVICE_FILE" ]] &&
+        { grep -Fqx '# Managed by Behify EasyMesh' "$SERVICE_FILE" ||
+          grep -Fq 'ExecStart=/root/easytier/easytier-core ' "$SERVICE_FILE"; }
 }
 
 remove_easymesh_service() {
@@ -724,6 +613,11 @@ remove_easymesh_service() {
 		 sleep 1
 		 return 1
 	fi
+    if ! is_behify_mesh_service_file; then
+        colorize red "Refusing to remove an unrecognized easymesh.service file." bold
+        press_key
+        return 1
+    fi
     colorize yellow "This will stop, disable, and remove $SERVICE_FILE." bold
     read -r -p "Remove the EasyMesh service? [y/N] " confirm || confirm=""
     [[ "$confirm" =~ ^[Yy]$ ]] || {
@@ -731,7 +625,7 @@ remove_easymesh_service() {
         return 0
     }
     colorize yellow "	Stopping Behify EasyMesh service..." bold
-    sudo systemctl stop easymesh.service &> /dev/null
+    systemctl stop easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
         colorize green "	Behify EasyMesh service stopped successfully.\n"
     else
@@ -741,7 +635,7 @@ remove_easymesh_service() {
     fi
 
     colorize yellow "	Disabling Behify EasyMesh service..." bold
-    sudo systemctl disable easymesh.service &> /dev/null
+    systemctl disable easymesh.service &> /dev/null
     if [[ $? -eq 0 ]]; then
         colorize green "	Behify EasyMesh service disabled successfully.\n"
     else
@@ -751,7 +645,7 @@ remove_easymesh_service() {
     fi
 
     colorize yellow "	Removing Behify EasyMesh service..." bold
-    sudo rm /etc/systemd/system/easymesh.service &> /dev/null
+    rm -f "$SERVICE_FILE" &> /dev/null
     if [[ $? -eq 0 ]]; then
         colorize green "	Behify EasyMesh service removed successfully.\n"
     else
@@ -761,7 +655,7 @@ remove_easymesh_service() {
     fi
 
     colorize yellow "	Reloading systemd daemon..." bold
-    sudo systemctl daemon-reload
+    systemctl daemon-reload
     if [[ $? -eq 0 ]]; then
         colorize green "	Systemd daemon reloaded successfully.\n"
     else
@@ -774,17 +668,20 @@ remove_easymesh_service() {
 }
 
 show_network_secret() {
+    local network_secret
+
 	echo ''
-    if [[ -f $SERVICE_FILE ]]; then
-        NETWORK_SECRET=$(grep -oP '(?<=--network-secret )[^ ]+' $SERVICE_FILE)
-        
-        if [[ -n $NETWORK_SECRET ]]; then
-            colorize cyan "	Network Secret Key: $NETWORK_SECRET" bold
+    if [[ -r "$MESH_ENV_FILE" ]]; then
+        network_secret=$(awk -F= '$1 == "EASYMESH_NETWORK_SECRET" { value=substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", value); print value }' "$MESH_ENV_FILE")
+        if [[ -n "$network_secret" ]]; then
+            colorize cyan "	Network Secret Key: $network_secret" bold
         else
             colorize red "	Network Secret key not found" bold
         fi
+    elif [[ -f "$SERVICE_FILE" ]]; then
+        colorize yellow "	This service uses a legacy unit-embedded secret. Reconnect to migrate it to root-only storage." bold
     else
-        colorize red "	Behify EasyMesh service does not exists." bold
+		colorize red "	Behify EasyMesh service does not exists." bold
     fi
     echo ''
     read -p "	Press Enter to continue..."
@@ -799,7 +696,7 @@ view_service_status() {
 		 return 1
 	fi
 	clear
-    sudo systemctl status easymesh.service
+    systemctl status easymesh.service
 }
 
 set_watchdog(){
@@ -866,7 +763,7 @@ start_watchdog(){
 	fi
 	touch /etc/monitor.sh /etc/monitor.log &> /dev/null
 	
-cat << EOF | sudo tee /etc/monitor.sh > /dev/null
+cat > /etc/monitor.sh << EOF
 #!/bin/bash
 
 # Configuration
@@ -879,7 +776,7 @@ LOG_FILE="/etc/monitor.log"
 # Function to restart the service
 restart_service() {
     local restart_time=\$(date +"%Y-%m-%d %H:%M:%S")
-    sudo systemctl restart "\$SERVICE_NAME"
+    systemctl restart "\$SERVICE_NAME"
     if [ \$? -eq 0 ]; then
         echo "\$restart_time: Service \$SERVICE_NAME restarted successfully." >> "\$LOG_FILE"
     else
@@ -998,9 +895,9 @@ view_logs() {
 
 # Function to add cron-tab job
 add_cron_job() {
-	echo 
-
-	local service_name="easymesh.service"
+	local service_name="easymesh.service" temp_crontab restart_time time_choice
+	local marker="# behify-easymesh-service-restart"
+	echo
 	
     # Prompt user to choose a restart time interval
     colorize cyan "Select the restart time interval:" bold
@@ -1045,35 +942,23 @@ add_cron_job() {
     esac
 
 
-    # remove cronjob created by this script
-    delete_cron_job > /dev/null 2>&1
-    
-    # Path to reset file
-    local reset_path="/root/easytier/reset.sh"
-    
-    #add cron job to kill the running easymesh processes
-    cat << EOF > "$reset_path"
-#! /bin/bash
-pids=\$(pgrep easytier)
-sudo kill -9 \$pids
-sudo systemctl daemon-reload
-sudo systemctl restart $service_name
-EOF
-
-    # make it +x
-    chmod +x "$reset_path"
-    
-    # Save existing crontab to a temporary file
-    crontab -l > /tmp/crontab.tmp
-
-    # Append the new cron job to the temporary file
-    echo "$restart_time $reset_path #$service_name" >> /tmp/crontab.tmp
-
-    # Install the modified crontab from the temporary file
-    crontab /tmp/crontab.tmp
-
-    # Remove the temporary file
-    rm /tmp/crontab.tmp
+    command -v crontab >/dev/null 2>&1 || {
+        colorize red "crontab is not installed; no maintenance job was changed." bold
+        return 1
+    }
+    temp_crontab=$(mktemp) || return 1
+    if crontab -l > "$temp_crontab" 2>/dev/null; then
+        sed -i "/#easymesh\.service$/d; /# behify-easymesh-service-restart$/d" "$temp_crontab"
+    else
+        : > "$temp_crontab"
+    fi
+    printf '%s /bin/systemctl restart %s %s\n' "$restart_time" "$service_name" "$marker" >> "$temp_crontab"
+    if ! crontab "$temp_crontab"; then
+        rm -f "$temp_crontab"
+        colorize red "Could not install the service restart schedule." bold
+        return 1
+    fi
+    rm -f "$temp_crontab"
     
     echo
     colorize green "Cron-job added successfully to restart the service '$service_name'." bold
@@ -1081,13 +966,26 @@ EOF
 }
 
 delete_cron_job() {
+    local service_name="easymesh.service" temp_crontab
+
     echo
-    local service_name="easymesh.service"
-    local reset_path="/root/easytier/reset.sh"
-    
-    crontab -l | grep -v "#$service_name" | crontab -
-    rm -f "$reset_path" >/dev/null 2>&1
-    
+    command -v crontab >/dev/null 2>&1 || {
+        colorize yellow "crontab is not installed." bold
+        return 0
+    }
+    temp_crontab=$(mktemp) || return 1
+    if ! crontab -l > "$temp_crontab" 2>/dev/null; then
+        rm -f "$temp_crontab"
+        colorize yellow "No crontab is installed for this user." bold
+        return 0
+    fi
+    sed -i "/#easymesh\.service$/d; /# behify-easymesh-service-restart$/d" "$temp_crontab"
+    if ! crontab "$temp_crontab"; then
+        rm -f "$temp_crontab"
+        colorize red "Could not update crontab." bold
+        return 1
+    fi
+    rm -f "$temp_crontab"
     colorize green "Cron job for $service_name deleted successfully." bold
     
     sleep 2
@@ -1113,20 +1011,6 @@ set_cronjob(){
    		*) colorize red "Invalid option!" && sleep 1 && return 1 ;;
    	esac
    	
-}
-
-check_core_status(){
-    DEST_DIR="/root/easytier"
-    FILE1="easytier-core"
-    FILE2="easytier-cli"
-    
-        if [ -f "$DEST_DIR/$FILE1" ] && [ -f "$DEST_DIR/$FILE2" ]; then
-        colorize green "Behify EasyMesh Core Installed" bold
-        return 0
-    else
-        colorize red "Behify EasyMesh Core not found" bold
-        return 1
-    fi
 }
 
 get_installed_core_version() {
@@ -1199,8 +1083,7 @@ show_diagnostics() {
     colorize cyan "EasyMesh Diagnostics" bold
     printf 'System architecture: %s\n' "$system_arch"
     printf 'Architecture package: %s\n' "$core_package"
-    printf 'Default core version: %s\n' "$DEFAULT_CORE_VERSION"
-    printf 'Requested core version: %s\n' "$CORE_VERSION"
+    printf 'Supported core version: %s\n' "$EASYTIER_VERSION"
     printf 'Installed core version: %s\n' "$(get_installed_core_version)"
     printf 'Running core version: %s\n' "$(get_running_core_version)"
     printf 'Service status: %s\n' "$(get_service_status)"
@@ -1212,29 +1095,17 @@ show_diagnostics() {
     press_key
 }
 
-# New function to remove core
-remove_easymesh_core(){
-	local confirm
-	echo
-	
-	if [[ ! -d '/root/easytier' ]]; then
-		 colorize red "	Behify EasyMesh directory not found." bold
-		 sleep 2
-		 return 1
-	fi
-	colorize yellow "This will permanently delete /root/easytier and both EasyTier binaries." bold
-	read -r -p "Remove the EasyMesh core? [y/N] " confirm || confirm=""
-	[[ "$confirm" =~ ^[Yy]$ ]] || {
-		colorize yellow "Core removal cancelled." bold
-		return 0
-	}
+run_uninstaller() {
+    local uninstaller="$SCRIPT_DIR/uninstall.sh"
 
-	rm -rf /root/easytier &> /dev/null
-	MAIN_CORE_VERSION="not-installed"
-	
-	colorize green "	Behify EasyMesh core deleted successfully." bold
-	sleep 2
-
+    if [[ ! -x "$uninstaller" ]]; then
+        colorize red "The managed uninstaller is missing. Reinstall the release package first." bold
+        press_key
+        return 1
+    fi
+    if "$uninstaller"; then
+        exit 0
+    fi
 }
 
 relay_port_routing() {
@@ -1267,11 +1138,12 @@ display_menu() {
     print_box_line "Behify EasyMesh"
     print_box_line "VPN Network Solution"
     printf "   +--------------------------------------+\n"
-    print_box_line "Core: $(get_main_core_version)"
+    print_box_line "EasyTier: $EASYTIER_VERSION"
+    print_box_line "Installed: $(get_main_core_version)"
     print_box_line "Service: $(get_service_status)"
     print_box_line "Telegram: @behify1"
     print_box_line "Channel: BehifyVPN"
-    print_box_line "Build: Behify private"
+    print_box_line "Version: v$BEHIFY_EASYMESH_VERSION"
     printf "   +--------------------------------------+\n"
     echo ''
     colorize cyan "Menu options:" bold
@@ -1285,7 +1157,7 @@ display_menu() {
     colorize reset "	[8] Cron-job setting"
     colorize yellow "	[9] Restart Service" 
     colorize red "	[10] Remove Service" 
-    colorize magenta "	[11] Remove Core" 
+    colorize magenta "	[11] Uninstall Behify EasyMesh"
     colorize cyan "	[12] Relay / Port Routing"
     colorize cyan "	[13] Diagnostics"
     
@@ -1310,7 +1182,7 @@ read_option() {
         8) set_cronjob ;;
         9) restart_easymesh_service ;;
         10) remove_easymesh_service ;;
-        11) remove_easymesh_core ;;
+        11) run_uninstaller ;;
         12) relay_port_routing ;;
         13) show_diagnostics ;;
         0) exit 0 ;;
@@ -1319,6 +1191,10 @@ read_option() {
 }
 
 # Main script
+if [[ "${EASYMESH_SOURCE_ONLY:-0}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+verify_installed_runtime || exit 1
 initialize_main_core_version
 while true
 do

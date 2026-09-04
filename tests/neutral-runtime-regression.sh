@@ -117,7 +117,7 @@ fi
 [[ -f "$RELAY_SERVICE_DROPIN_DIR/99-admin.conf" ]]
 find "$RELAY_RELEASES_DIR" -type f -name behify-relayd -print -quit | grep -q .
 grep -Fq 'XRAY_CANDIDATE_BINARY="$temp_dir/unpacked/behify-relayd"' "$repo_root/relay-manager"
-grep -Fq '"$INSTALL_DIR/relay/relay-manager" --migrate-runtime' "$repo_root/install.sh"
+grep -Fq '"$WORK_DIR/application/relay/relay-manager" --migrate-runtime' "$repo_root/install.sh"
 if find "$RELAY_RELEASES_DIR" -type f -name xray -print -quit | grep -q .; then
     printf 'Update or migration staging retained an xray runtime basename.\n' >&2
     exit 1
