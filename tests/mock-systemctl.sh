@@ -8,6 +8,10 @@ printf '%s\n' "$*" >> "$state_dir/calls.log"
 
 case "${1:-}" in
     is-active)
+        if [[ -f "$state_dir/transient-new-runtime-failure" ]]; then
+            rm -f "$state_dir/transient-new-runtime-failure" "$state_dir/active"
+            exit 1
+        fi
         [[ -f "$state_dir/active" ]]
         ;;
     is-enabled)
@@ -18,7 +22,7 @@ case "${1:-}" in
         ;;
     start|restart)
         if [[ -f "$state_dir/fail-new-runtime" ]] && grep -Fq '2.6.4' "$MOCK_INSTALL_ROOT/root/easytier/easytier-core" 2>/dev/null; then
-            exit 1
+            touch "$state_dir/transient-new-runtime-failure"
         fi
         touch "$state_dir/active"
         ;;

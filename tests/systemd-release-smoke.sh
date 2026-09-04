@@ -116,9 +116,18 @@ old_core_hash=$(sha256sum "$runtime_dir/easytier-core" | awk '{print $1}')
 old_cli_hash=$(sha256sum "$runtime_dir/easytier-cli" | awk '{print $1}')
 write_service --behify-invalid-ci-option
 systemctl start easymesh.service
-if EASYMESH_OFFLINE=1 bash "$package_dir/install.sh"; then
+invalid_fixture_log="$work_dir/invalid-fixture.log"
+if "$package_dir/core/easytier-core" --behify-invalid-ci-option --version >"$invalid_fixture_log" 2>&1; then
+    die "Negative service fixture does not make the candidate runtime fail."
+fi
+grep -Eiq 'unknown|unexpected|invalid' "$invalid_fixture_log" || die "Negative service fixture did not report an invalid argument."
+negative_install_log="$work_dir/negative-install.log"
+if EASYMESH_OFFLINE=1 bash "$package_dir/install.sh" >"$negative_install_log" 2>&1; then
+    cat "$negative_install_log" >&2
     die "Installer accepted a runtime whose managed service could not start."
 fi
+grep -Fq 'Service validation failed:' "$negative_install_log"
+grep -Fq 'Service validation state:' "$negative_install_log"
 [[ "$(sha256sum "$runtime_dir/easytier-core" | awk '{print $1}')" == "$old_core_hash" ]]
 [[ "$(sha256sum "$runtime_dir/easytier-cli" | awk '{print $1}')" == "$old_cli_hash" ]]
 systemctl is-active --quiet easymesh.service

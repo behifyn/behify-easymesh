@@ -315,18 +315,53 @@ activate_application() {
 }
 
 validate_service_after_upgrade() {
-    local pid running_version enabled_now=0
+    local pid running_version enabled_now=0 initial_pid="" initial_restarts="" current_restarts
+    local attempt
+
+    service_validation_diagnostics() {
+        local service_state journal_output
+
+        service_state=$(systemctl show easymesh.service \
+            -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus \
+            -p MainPID -p NRestarts --no-pager 2>&1 || true)
+        printf 'Service validation state:\n%s\n' "$service_state" | \
+            sed -E 's/([Ss]ecret[=:[:space:]]*)[^[:space:]]+/\1[redacted]/g'
+        if command -v journalctl >/dev/null 2>&1; then
+            journal_output=$(journalctl -u easymesh.service -n 20 --no-pager -o cat 2>&1 || true)
+            printf 'Service validation journal (last 20 lines):\n%s\n' "$journal_output" | \
+                sed -E 's/([Ss]ecret[=:[:space:]]*)[^[:space:]]+/\1[redacted]/g'
+        fi
+    }
+
+    service_validation_failed() {
+        printf 'Service validation failed: %s\n' "$1" >&2
+        service_validation_diagnostics >&2
+        return 1
+    }
 
     [[ -f "$SERVICE_FILE" ]] || return 0
     if [[ "$SERVICE_WAS_ACTIVE" == "1" ]]; then
-        systemctl start easymesh.service >/dev/null 2>&1
-        systemctl is-active --quiet easymesh.service
-        if [[ "$TEST_MODE" != "1" ]]; then
-            pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null)
-            [[ "$pid" =~ ^[1-9][0-9]*$ && -x "/proc/$pid/exe" ]]
-            running_version=$(reported_version "/proc/$pid/exe")
-            [[ "$running_version" == "2.6.4" ]]
-        fi
+        systemctl start easymesh.service >/dev/null 2>&1 || service_validation_failed 'systemctl start failed.'
+        for attempt in 1 2 3 4; do
+            systemctl is-active --quiet easymesh.service || service_validation_failed 'service did not remain active.'
+            pid=$(systemctl show -p MainPID --value easymesh.service 2>/dev/null || true)
+            [[ "$pid" =~ ^[1-9][0-9]*$ ]] || service_validation_failed 'service did not report a running MainPID.'
+            current_restarts=$(systemctl show -p NRestarts --value easymesh.service 2>/dev/null || true)
+            [[ "$current_restarts" =~ ^[0-9]+$ ]] || service_validation_failed 'service did not report a numeric restart count.'
+            if [[ -z "$initial_pid" ]]; then
+                initial_pid="$pid"
+                initial_restarts="$current_restarts"
+            else
+                [[ "$pid" == "$initial_pid" ]] || service_validation_failed 'service MainPID changed during startup validation.'
+                [[ "$current_restarts" == "$initial_restarts" ]] || service_validation_failed 'service restarted during startup validation.'
+            fi
+            if [[ "$TEST_MODE" != "1" ]]; then
+                [[ -x "/proc/$pid/exe" ]] || service_validation_failed 'service MainPID executable is unavailable.'
+                running_version=$(reported_version "/proc/$pid/exe")
+                [[ "$running_version" == "2.6.4" ]] || service_validation_failed 'service MainPID did not report EasyTier 2.6.4.'
+            fi
+            [[ "$attempt" == "4" ]] || sleep 1
+        done
     else
         ! systemctl is-active --quiet easymesh.service
     fi
@@ -348,7 +383,7 @@ fi
 if [[ "$TEST_MODE" != "1" && "$(uname -s)" != "Linux" ]]; then
     die "Unsupported operating system '$(uname -s)'. Behify EasyMesh v1 supports Linux only."
 fi
-for command_name in awk grep sha256sum od tr head mktemp install cp mv readlink date chmod mkdir rm ln dirname uname systemctl; do
+for command_name in awk grep sha256sum od tr head mktemp install cp mv readlink date chmod mkdir rm ln dirname uname systemctl sed sleep; do
     require_command "$command_name"
 done
 [[ -f "$VERSION_FILE" && ! -L "$VERSION_FILE" ]] || die "Package version metadata is missing."
