@@ -60,6 +60,20 @@ verify_package() {
 verify_package x86_64
 verify_package aarch64
 
+if find "$output_dir" -mindepth 1 -maxdepth 1 -type f \
+    -name 'behify-easymesh-v*-linux-*.tar.gz' \
+    ! -name "behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-x86_64.tar.gz" \
+    ! -name "behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-aarch64.tar.gz" \
+    -print -quit | grep -q .; then
+    printf 'Release output contains a stale architecture package.\n' >&2
+    exit 1
+fi
+if find "$output_dir" -mindepth 1 -maxdepth 1 -type f -name 'online-install-v*.sh' \
+    ! -name "online-install-v${BEHIFY_EASYMESH_VERSION}.sh" -print -quit | grep -q .; then
+    printf 'Release output contains a stale online installer.\n' >&2
+    exit 1
+fi
+
 x86_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-x86_64.tar.gz" | awk '{print $1}')
 aarch64_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-aarch64.tar.gz" | awk '{print $1}')
 online_installer="$output_dir/online-install-v${BEHIFY_EASYMESH_VERSION}.sh"

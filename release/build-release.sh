@@ -39,7 +39,11 @@ if [[ "${BEHIFY_ALLOW_DIRTY_BUILD:-0}" != "1" ]] && [[ -n "$(git -C "$REPO_ROOT"
     die "Release builds require a clean Git working tree. Commit or stash changes first."
 fi
 
+[[ ! -L "$OUTPUT_DIR" ]] || die "Refusing to write release artifacts through a symlinked output directory."
 mkdir -p "$CACHE_DIR" "$OUTPUT_DIR"
+find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type f \
+    \( -name 'behify-easymesh-v*-linux-*.tar.gz' -o -name 'online-install-v*.sh' \
+       -o -name 'easytier-v*-source.tar.gz' -o -name 'SHA256SUMS' \) -delete
 STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/behify-easymesh-release.XXXXXX")
 chmod 0700 "$STAGING_DIR"
 
