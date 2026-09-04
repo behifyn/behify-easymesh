@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
+source tests/license-integrity.sh
 
 while IFS= read -r script; do
     bash -n "$script"
@@ -49,10 +50,7 @@ if grep -Eq '/releases/(latest|download/latest)|/main/' release/build-release.sh
     printf 'Release tooling references a moving upstream target.\n' >&2
     exit 1
 fi
-git diff --quiet main -- LICENSE NOTICE || {
-    printf 'LICENSE or NOTICE changed from main.\n' >&2
-    exit 1
-}
+verify_license_notice_integrity
 grep -Fq 'client_command="$quoted_client $view"' easymesh
 grep -Fq 'local -a watch_options=(-n1 -t)' easymesh
 grep -Fq 'watch "${watch_options[@]}" -- "$client_command"' easymesh
@@ -66,6 +64,7 @@ if grep -Eq 'ExecStart=.*\$NETWORK_SECRET' easymesh; then
 fi
 
 bash tests/mesh-watch-regression.sh
+bash tests/license-integrity-regression.sh
 bash tests/temp-path-regression.sh
 bash tests/neutral-runtime-regression.sh
 bash tests/mesh-config-security.sh
