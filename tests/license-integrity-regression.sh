@@ -25,6 +25,7 @@ grep -Fqx 'source tests/license-integrity.sh' "$repo_root/tests/static-smoke.sh"
 full_repo="$temp_root/full-history"
 git clone --quiet --no-local "$repo_root" "$full_repo"
 copy_license_integrity_helper "$full_repo"
+git -C "$full_repo" checkout --quiet --detach HEAD
 
 if git -C "$full_repo" show-ref --verify --quiet refs/heads/main; then
     git -C "$full_repo" branch -D main >/dev/null
