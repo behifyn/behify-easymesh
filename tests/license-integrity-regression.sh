@@ -50,17 +50,18 @@ grep -Fq "LICENSE or NOTICE changed from immutable baseline $expected_baseline_s
     exit 1
 }
 
-shallow_repo="$temp_root/missing-baseline"
-git clone --quiet --depth 1 --branch "$(git -C "$repo_root" branch --show-current)" \
-    "file://$repo_root" "$shallow_repo"
-copy_license_integrity_helper "$shallow_repo"
+missing_baseline_repo="$temp_root/missing-baseline"
+git init --quiet "$missing_baseline_repo"
+mkdir -p "$missing_baseline_repo/tests"
+cp "$repo_root/LICENSE" "$repo_root/NOTICE" "$missing_baseline_repo/"
+copy_license_integrity_helper "$missing_baseline_repo"
 
-if git -C "$shallow_repo" cat-file -e "${expected_baseline_sha}^{commit}" 2>/dev/null; then
-    printf 'Expected shallow regression fixture to omit the immutable baseline.\n' >&2
+if git -C "$missing_baseline_repo" cat-file -e "${expected_baseline_sha}^{commit}" 2>/dev/null; then
+    printf 'Expected missing-baseline regression fixture to omit the immutable baseline.\n' >&2
     exit 1
 fi
 
-if run_license_integrity "$shallow_repo" >"$temp_root/missing-baseline.out" 2>&1; then
+if run_license_integrity "$missing_baseline_repo" >"$temp_root/missing-baseline.out" 2>&1; then
     printf 'Expected a missing baseline to fail the integrity check.\n' >&2
     exit 1
 fi
