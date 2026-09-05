@@ -11,7 +11,7 @@ while IFS= read -r script; do
 done < <(find . -type f \( -name '*.sh' -o -name '*.sh.in' \) -print | LC_ALL=C sort)
 bash -n easymesh relay-manager
 
-grep -Fqx 'BEHIFY_EASYMESH_VERSION=1.0.0-rc.1' versions.env
+grep -Fqx 'BEHIFY_EASYMESH_VERSION=1.0.0-rc.2' versions.env
 grep -Fqx 'EASYTIER_VERSION=v2.6.4' versions.env
 grep -Fqx 'SERVICE_FILE="/etc/systemd/system/easymesh.service"' easymesh
 grep -Fqx 'RELAY_SERVICE_NAME="behify-relay.service"' relay-manager
@@ -58,6 +58,12 @@ grep -Eq 'watch_mesh_view[[:space:]]+peer$' easymesh
 grep -Eq 'watch_mesh_view[[:space:]]+route$' easymesh
 grep -Eq 'watch_mesh_view[[:space:]]+peer-center$' easymesh
 grep -Fq 'EnvironmentFile=/etc/behify-easymesh/mesh.env' easymesh
+grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' easymesh
+grep -Fq -- '--console-log-level warn' easymesh
+if grep -Eq 'ExecStart=.*--network-secret' easymesh; then
+    printf 'The managed mesh service still exposes its secret through process arguments.\n' >&2
+    exit 1
+fi
 if grep -Eq 'ExecStart=.*\$NETWORK_SECRET' easymesh; then
     printf 'A literal mesh secret variable remains in the service writer.\n' >&2
     exit 1
@@ -69,6 +75,7 @@ bash tests/temp-path-regression.sh
 bash tests/neutral-runtime-regression.sh
 bash tests/mesh-config-security.sh
 bash tests/mesh-config-transaction.sh
+bash tests/mesh-interactive-regression.sh
 bash tests/installer-regression.sh
 bash tests/uninstall-ownership.sh
 

@@ -15,6 +15,9 @@ BACKUP_PARENT="$(root_path /opt/behify-easymesh-backups)"
 COMMAND_PATH="$(root_path /usr/local/bin/easymesh)"
 CORE_DIR="$(root_path /root/easytier)"
 SERVICE_FILE="$(root_path /etc/systemd/system/easymesh.service)"
+MESH_CONFIG_DIR="$(root_path /etc/behify-easymesh)"
+MESH_ENV_FILE="$MESH_CONFIG_DIR/mesh.env"
+MESH_CORE_CONFIG="$MESH_CONFIG_DIR/easytier.toml"
 MANIFEST_FILE="$SCRIPT_DIR/manifest.txt"
 FILES_MANIFEST="$SCRIPT_DIR/files.sha256"
 VERSION_FILE="$SCRIPT_DIR/versions.env"
@@ -32,6 +35,9 @@ COMMAND_BACKED_UP=0
 COMMAND_INSTALLED=0
 SERVICE_WAS_ACTIVE=0
 SERVICE_WAS_ENABLED=0
+MESH_SERVICE_CHANGED=0
+MESH_CONFIG_CHANGED=0
+MESH_CONFIG_EXISTED=0
 TRANSACTION_STARTED=0
 
 die() {
@@ -62,6 +68,16 @@ restore_transaction() {
     if [[ "$SERVICE_WAS_ACTIVE" == "1" && -f "$SERVICE_FILE" ]]; then
         systemctl stop easymesh.service >/dev/null 2>&1 || true
     fi
+    if [[ "$MESH_SERVICE_CHANGED" == "1" ]]; then
+        cp -a -- "$BACKUP_DIR/mesh/easymesh.service" "$SERVICE_FILE" || rollback_ok=0
+    fi
+    if [[ "$MESH_CONFIG_CHANGED" == "1" ]]; then
+        if [[ "$MESH_CONFIG_EXISTED" == "1" ]]; then
+            cp -a -- "$BACKUP_DIR/mesh/easytier.toml" "$MESH_CORE_CONFIG" || rollback_ok=0
+        else
+            rm -f -- "$MESH_CORE_CONFIG"
+        fi
+    fi
     if [[ "$CORE_CHANGED" == "1" ]]; then
         rm -f -- "$CORE_NEW_PATH" "$CLI_NEW_PATH" "$CORE_DIR/easytier-core" "$CORE_DIR/easytier-cli"
         [[ ! -e "$BACKUP_DIR/core/easytier-core" && ! -L "$BACKUP_DIR/core/easytier-core" ]] || cp -a -- "$BACKUP_DIR/core/easytier-core" "$CORE_DIR/easytier-core" || rollback_ok=0
@@ -81,6 +97,9 @@ restore_transaction() {
     fi
     if [[ "$COMMAND_BACKED_UP" == "1" ]]; then
         mv -- "$BACKUP_DIR/command-easymesh" "$COMMAND_PATH" || rollback_ok=0
+    fi
+    if [[ "$MESH_SERVICE_CHANGED" == "1" || "$MESH_CONFIG_CHANGED" == "1" ]]; then
+        systemctl daemon-reload >/dev/null 2>&1 || rollback_ok=0
     fi
     if [[ "$SERVICE_WAS_ACTIVE" == "1" && -f "$SERVICE_FILE" ]]; then
         systemctl start easymesh.service >/dev/null 2>&1 || rollback_ok=0
@@ -208,7 +227,7 @@ stage_application() {
     if [[ -d "$INSTALL_DIR/relay" ]]; then
         cp -a "$INSTALL_DIR/relay/." "$destination/relay/"
     fi
-    for item in easymesh install.sh uninstall.sh relay-manager versions.env manifest.txt files.sha256 README.md README_FA.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
+    for item in easymesh install.sh uninstall.sh relay-manager versions.env manifest.txt files.sha256 README.md README.fa.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
         [[ -f "$SCRIPT_DIR/$item" ]] || die "Required package file is missing: $item"
         if [[ "$item" == "relay-manager" ]]; then
             install -m 0755 "$SCRIPT_DIR/$item" "$destination/relay/relay-manager"
@@ -250,8 +269,8 @@ capture_service_state() {
 }
 
 backup_existing_installation() {
-    mkdir -p "$BACKUP_DIR/core"
-    chmod 0700 "$BACKUP_DIR" "$BACKUP_DIR/core"
+    mkdir -p "$BACKUP_DIR/core" "$BACKUP_DIR/mesh"
+    chmod 0700 "$BACKUP_DIR" "$BACKUP_DIR/core" "$BACKUP_DIR/mesh"
     [[ ! -d "$CORE_DIR" ]] || CORE_DIR_EXISTED=1
     if [[ -e "$INSTALL_DIR" ]]; then
         mv -- "$INSTALL_DIR" "$BACKUP_DIR/application"
@@ -259,6 +278,11 @@ backup_existing_installation() {
     fi
     [[ ! -e "$CORE_DIR/easytier-core" && ! -L "$CORE_DIR/easytier-core" ]] || cp -a -- "$CORE_DIR/easytier-core" "$BACKUP_DIR/core/easytier-core"
     [[ ! -e "$CORE_DIR/easytier-cli" && ! -L "$CORE_DIR/easytier-cli" ]] || cp -a -- "$CORE_DIR/easytier-cli" "$BACKUP_DIR/core/easytier-cli"
+    [[ ! -f "$SERVICE_FILE" ]] || cp -a -- "$SERVICE_FILE" "$BACKUP_DIR/mesh/easymesh.service"
+    if [[ -f "$MESH_CORE_CONFIG" ]]; then
+        cp -a -- "$MESH_CORE_CONFIG" "$BACKUP_DIR/mesh/easytier.toml"
+        MESH_CONFIG_EXISTED=1
+    fi
     if [[ -e "$COMMAND_PATH" || -L "$COMMAND_PATH" ]]; then
         if [[ -L "$COMMAND_PATH" && "$(readlink "$COMMAND_PATH")" == "/opt/behify-easymesh/easymesh" ]] ||
            { [[ "$TEST_MODE" == "1" && -f "$COMMAND_PATH" ]] && grep -Fqx '# Behify EasyMesh test command link' "$COMMAND_PATH"; }; then
@@ -269,6 +293,81 @@ backup_existing_installation() {
             printf 'Existing command path was not Behify-owned and was backed up to: %s\n' "$BACKUP_DIR/command-easymesh"
         fi
     fi
+}
+
+migrate_mesh_service_confidentiality() {
+    local staged_service="$WORK_DIR/easymesh.service" staged_config="$WORK_DIR/easytier.toml"
+    local new_service="${SERVICE_FILE}.new.$$" new_config="${MESH_CORE_CONFIG}.new.$$"
+
+    mesh_migration_error() {
+        printf 'Error: %s\n' "$*" >&2
+        return 1
+    }
+
+    [[ -f "$SERVICE_FILE" ]] || return 0
+    if grep -Fq -- '--network-secret ${EASYMESH_NETWORK_SECRET}' "$SERVICE_FILE"; then
+        [[ ! -L "$MESH_CONFIG_DIR" && ! -L "$MESH_ENV_FILE" && ! -L "$MESH_CORE_CONFIG" ]] ||
+            mesh_migration_error "Refusing to migrate a symlinked mesh configuration path."
+        [[ -f "$MESH_ENV_FILE" ]] || mesh_migration_error "Managed easymesh.service needs $MESH_ENV_FILE before its secret-safe migration."
+        if [[ "$TEST_MODE" != "1" || "$(uname -s)" == "Linux" ]]; then
+            [[ "$(stat -c '%a' "$MESH_ENV_FILE")" == "600" ]] ||
+                mesh_migration_error "Managed mesh.env must be mode 0600 before migration."
+        fi
+        if [[ "$TEST_MODE" != "1" ]]; then
+            [[ "$(stat -c '%u' "$MESH_ENV_FILE")" == "0" ]] ||
+                mesh_migration_error "Managed mesh.env must be owned by root before migration."
+        fi
+        grep -Fqx 'EnvironmentFile=/etc/behify-easymesh/mesh.env' "$SERVICE_FILE" ||
+            mesh_migration_error "Managed easymesh.service uses an unsupported secret-bearing layout; it was not modified."
+        sed \
+            -e 's|ExecStart=/root/easytier/easytier-core |ExecStart=/root/easytier/easytier-core --config-file /etc/behify-easymesh/easytier.toml --console-log-level warn |' \
+            -e 's| --network-secret ${EASYMESH_NETWORK_SECRET}||' \
+            "$SERVICE_FILE" > "$staged_service"
+    elif grep -Fq -- '--network-secret' "$SERVICE_FILE"; then
+        mesh_migration_error "Managed easymesh.service uses an unsupported secret-bearing layout; it was not modified."
+    elif grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$SERVICE_FILE" &&
+         grep -Fq -- '--console-log-level warn' "$SERVICE_FILE"; then
+        cp -p -- "$SERVICE_FILE" "$staged_service"
+    else
+        return 0
+    fi
+
+    umask 077
+    cat > "$staged_config" <<'EOF'
+[network_identity]
+network_name = "default"
+network_secret = "${EASYMESH_NETWORK_SECRET}"
+EOF
+    grep -Fqx 'EnvironmentFile=/etc/behify-easymesh/mesh.env' "$staged_service" ||
+        mesh_migration_error "Migrated mesh service lost its environment file."
+    grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$staged_service" ||
+        mesh_migration_error "Migrated mesh service did not select the private EasyTier config."
+    grep -Fq -- '--console-log-level warn' "$staged_service" ||
+        mesh_migration_error "Migrated mesh service did not enforce WARN console logging."
+    ! grep -Fq -- '--network-secret' "$staged_service" ||
+        mesh_migration_error "Migrated mesh service still exposes a network-secret argument."
+    if [[ -e "$MESH_CORE_CONFIG" ]] && ! cmp -s "$staged_config" "$MESH_CORE_CONFIG"; then
+        mesh_migration_error "Existing EasyTier config is not the Behify-managed minimal config; it was not modified."
+    fi
+    EASYMESH_NETWORK_SECRET=BehifyConfigValidationSecret "$WORK_DIR/easytier-core" \
+        --config-file "$staged_config" --console-log-level warn --check-config >/dev/null 2>&1 ||
+        mesh_migration_error "Migrated EasyTier configuration did not pass candidate runtime validation."
+
+    if cmp -s "$staged_service" "$SERVICE_FILE" && [[ -f "$MESH_CORE_CONFIG" ]] &&
+       cmp -s "$staged_config" "$MESH_CORE_CONFIG" && [[ "$(stat -c '%a' "$MESH_CORE_CONFIG")" == "600" ]]; then
+        return 0
+    fi
+    [[ "$SERVICE_WAS_ACTIVE" != "1" ]] || systemctl stop easymesh.service >/dev/null 2>&1
+    mkdir -p "$MESH_CONFIG_DIR"
+    chmod 0700 "$MESH_CONFIG_DIR"
+    install -m 0600 "$staged_config" "$new_config"
+    install -m 0644 "$staged_service" "$new_service"
+    mv -f -- "$new_config" "$MESH_CORE_CONFIG"
+    chmod 0600 "$MESH_CORE_CONFIG"
+    MESH_CONFIG_CHANGED=1
+    mv -f -- "$new_service" "$SERVICE_FILE"
+    MESH_SERVICE_CHANGED=1
+    systemctl daemon-reload >/dev/null 2>&1
 }
 
 activate_runtime() {
@@ -383,7 +482,7 @@ fi
 if [[ "$TEST_MODE" != "1" && "$(uname -s)" != "Linux" ]]; then
     die "Unsupported operating system '$(uname -s)'. Behify EasyMesh v1 supports Linux only."
 fi
-for command_name in awk grep sha256sum od tr head mktemp install cp mv readlink date chmod mkdir rm ln dirname uname systemctl sed sleep; do
+for command_name in awk grep sha256sum od tr head mktemp install cp mv readlink date chmod mkdir rm ln dirname uname systemctl sed sleep cmp stat openssl python3; do
     require_command "$command_name"
 done
 [[ -f "$VERSION_FILE" && ! -L "$VERSION_FILE" ]] || die "Package version metadata is missing."
@@ -417,6 +516,7 @@ EXPECTED_CORE_HASH=$(manifest_value easytier_core_sha256)
 EXPECTED_CLI_HASH=$(manifest_value easytier_cli_sha256)
 activate_runtime "$EXPECTED_CORE_HASH" "$EXPECTED_CLI_HASH"
 activate_application
+migrate_mesh_service_confidentiality
 validate_service_after_upgrade
 TRANSACTION_STARTED=0
 

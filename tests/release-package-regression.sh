@@ -11,6 +11,20 @@ trap 'rm -rf -- "$test_root"' EXIT
 [[ -f "$output_dir/SHA256SUMS" ]]
 (cd "$output_dir" && sha256sum --quiet -c SHA256SUMS)
 
+expected_assets=$(printf '%s\n' \
+    "SHA256SUMS" \
+    "behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-aarch64.tar.gz" \
+    "behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-x86_64.tar.gz" \
+    "easytier-v2.6.4-source.tar.gz" \
+    "install.sh" \
+    "online-install-v${BEHIFY_EASYMESH_VERSION}.sh")
+actual_assets=$(find "$output_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+[[ "$actual_assets" == "$expected_assets" ]] || {
+    printf 'Release output does not contain the exact expected asset set.\n' >&2
+    diff -u <(printf '%s\n' "$expected_assets") <(printf '%s\n' "$actual_assets") >&2 || true
+    exit 1
+}
+
 manifest_value() {
     local manifest="$1" key="$2"
     awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1) }' "$manifest"
@@ -77,6 +91,8 @@ fi
 x86_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-x86_64.tar.gz" | awk '{print $1}')
 aarch64_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-aarch64.tar.gz" | awk '{print $1}')
 online_installer="$output_dir/online-install-v${BEHIFY_EASYMESH_VERSION}.sh"
+cmp -s "$online_installer" "$output_dir/install.sh"
+grep -Fq '  install.sh' "$output_dir/SHA256SUMS"
 grep -Fq "BEHIFY_VERSION=\"$BEHIFY_EASYMESH_VERSION\"" "$online_installer"
 grep -Fq "X86_64_SHA256=\"$x86_hash\"" "$online_installer"
 grep -Fq "AARCH64_SHA256=\"$aarch64_hash\"" "$online_installer"

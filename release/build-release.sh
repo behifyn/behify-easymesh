@@ -32,7 +32,7 @@ trap 'exit 143' TERM
 . "$ASSET_METADATA"
 [[ "$BEHIFY_EASYMESH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] || die "Invalid Behify release version metadata."
 [[ "$EASYTIER_VERSION" == "v2.6.4" ]] || die "Unexpected EasyTier release version metadata."
-for command_name in curl sha256sum unzip tar awk grep od tr find sort install mktemp sed git cp chmod mkdir rm mv basename; do
+for command_name in curl sha256sum unzip tar awk grep od tr find sort install mktemp sed git cp chmod mkdir rm mv basename cmp; do
     require_command "$command_name"
 done
 if [[ "${BEHIFY_ALLOW_DIRTY_BUILD:-0}" != "1" ]] && [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]]; then
@@ -41,9 +41,11 @@ fi
 
 [[ ! -L "$OUTPUT_DIR" ]] || die "Refusing to write release artifacts through a symlinked output directory."
 mkdir -p "$CACHE_DIR" "$OUTPUT_DIR"
-find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type f \
-    \( -name 'behify-easymesh-v*-linux-*.tar.gz' -o -name 'online-install-v*.sh' \
-       -o -name 'easytier-v*-source.tar.gz' -o -name 'SHA256SUMS' \) -delete
+find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type f -delete
+find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type l -delete
+if find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    die "Release output contains a directory or unsupported entry that was not removed."
+fi
 STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/behify-easymesh-release.XXXXXX")
 chmod 0700 "$STAGING_DIR"
 
@@ -98,7 +100,7 @@ host_architecture() {
 copy_release_files() {
     local package_dir="$1" item
 
-    for item in easymesh install.sh uninstall.sh relay-manager versions.env README.md README_FA.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
+    for item in easymesh install.sh uninstall.sh relay-manager versions.env README.md README.fa.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
         install -m 0644 "$REPO_ROOT/$item" "$package_dir/$item"
     done
     chmod 0755 "$package_dir/easymesh" "$package_dir/install.sh" "$package_dir/uninstall.sh" "$package_dir/relay-manager"
@@ -197,6 +199,8 @@ sed -e "s/@BEHIFY_VERSION@/$BEHIFY_EASYMESH_VERSION/g" \
     -e "s/@AARCH64_PACKAGE_SHA256@/$AARCH64_PACKAGE_HASH/g" \
     "$REPO_ROOT/release/online-install.sh.in" > "$ONLINE_INSTALLER"
 chmod 0755 "$ONLINE_INSTALLER"
+cp -p "$ONLINE_INSTALLER" "$OUTPUT_DIR/install.sh"
+cmp -s "$ONLINE_INSTALLER" "$OUTPUT_DIR/install.sh" || die "Stable installer alias does not match the versioned bootstrap."
 
 fetch_verified "$EASYTIER_SOURCE_URL" "$EASYTIER_SOURCE_SHA256" "$CACHE_DIR/$EASYTIER_SOURCE_ASSET"
 cp -p "$CACHE_DIR/$EASYTIER_SOURCE_ASSET" "$OUTPUT_DIR/$EASYTIER_SOURCE_ASSET"
@@ -207,6 +211,7 @@ cp -p "$CACHE_DIR/$EASYTIER_SOURCE_ASSET" "$OUTPUT_DIR/$EASYTIER_SOURCE_ASSET"
         "$(basename "$X86_PACKAGE")" \
         "$(basename "$AARCH64_PACKAGE")" \
         "$(basename "$ONLINE_INSTALLER")" \
+        "install.sh" \
         "$EASYTIER_SOURCE_ASSET" > SHA256SUMS
 )
 printf 'Release artifacts written to: %s\n' "$OUTPUT_DIR"

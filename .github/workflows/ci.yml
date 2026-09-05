@@ -50,6 +50,7 @@ jobs:
             release-output/behify-easymesh-v${{ steps.release.outputs.version }}-linux-x86_64.tar.gz
             release-output/behify-easymesh-v${{ steps.release.outputs.version }}-linux-aarch64.tar.gz
             release-output/online-install-v${{ steps.release.outputs.version }}.sh
+            release-output/install.sh
             release-output/SHA256SUMS
             release-output/easytier-v2.6.4-source.tar.gz
           if-no-files-found: error

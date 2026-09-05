@@ -42,12 +42,14 @@ cp "$package_dir/core/easytier-cli" "$protected_root/root/easytier/easytier-cli"
 printf 'unrelated command\n' > "$protected_root/usr/local/bin/easymesh"
 printf '[Service]\nExecStart=/usr/bin/unrelated\n' > "$protected_root/etc/systemd/system/easymesh.service"
 printf 'secret config\n' > "$protected_root/etc/behify-easymesh/mesh.env"
+printf 'private core config\n' > "$protected_root/etc/behify-easymesh/easytier.toml"
 printf 'system xray\n' > "$protected_root/etc/xray/config.json"
 run_uninstaller "$protected_root"
 [[ -f "$protected_root/root/easytier/easytier-core" ]]
 [[ -f "$protected_root/usr/local/bin/easymesh" ]]
 [[ -f "$protected_root/etc/systemd/system/easymesh.service" ]]
 [[ -f "$protected_root/etc/behify-easymesh/mesh.env" ]]
+[[ -f "$protected_root/etc/behify-easymesh/easytier.toml" ]]
 [[ -f "$protected_root/opt/behify-easymesh/relay/state" ]]
 [[ -f "$protected_root/etc/xray/config.json" ]]
 if grep -Eq '^(stop|disable) easymesh\.service$' "$protected_root/systemctl-state/calls.log" 2>/dev/null; then
@@ -71,6 +73,7 @@ printf '%s\n' '[Service]' 'ExecStart=/bin/bash /etc/monitor.sh' > "$purge_root/e
 printf 'monitor\n' > "$purge_root/etc/monitor.sh"
 printf 'log\n' > "$purge_root/etc/monitor.log"
 printf 'secret\n' > "$purge_root/etc/behify-easymesh/mesh.env"
+printf 'private core config\n' > "$purge_root/etc/behify-easymesh/easytier.toml"
 printf 'backup\n' > "$purge_root/etc/behify-easymesh/backups/config"
 printf 'relay definitions\n' > "$purge_root/etc/behify-easymesh/relay/relays.json"
 printf 'relay runtime\n' > "$purge_root/opt/behify-easymesh/relay/state"
@@ -81,6 +84,7 @@ run_uninstaller "$purge_root" --purge --yes
 [[ ! -e "$purge_root/etc/systemd/system/easymesh.service" ]]
 [[ ! -e "$purge_root/etc/systemd/system/easymesh-watchdog.service" ]]
 [[ ! -e "$purge_root/etc/behify-easymesh/mesh.env" ]]
+[[ ! -e "$purge_root/etc/behify-easymesh/easytier.toml" ]]
 [[ -f "$purge_root/etc/behify-easymesh/relay/relays.json" ]]
 [[ -f "$purge_root/opt/behify-easymesh/relay/state" ]]
 [[ -f "$purge_root/etc/xray/config.json" ]]

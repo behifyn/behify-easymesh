@@ -9,7 +9,7 @@ architecture="${2:-x86_64}"
 
 rm -rf -- "$destination"
 mkdir -p "$destination/core"
-for file in easymesh install.sh uninstall.sh relay-manager versions.env README.md README_FA.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
+for file in easymesh install.sh uninstall.sh relay-manager versions.env README.md README.fa.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md LICENSE NOTICE; do
     cp -p "$repo_root/$file" "$destination/$file"
 done
 cp -a "$repo_root/docs" "$repo_root/licenses" "$destination/"

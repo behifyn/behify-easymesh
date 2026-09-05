@@ -40,23 +40,33 @@ fi
 IP_ADDRESS='10.144.144.1'
 PEER_ARGUMENTS='--peers udp://10.144.144.2:2090'
 HOSTNAME='server-1'
-NETWORK_SECRET='StrongSecret-123'
+NETWORK_SECRET='BehifyRc2SecretMarker-123'
 DEFAULT_PROTOCOL='udp'
 LISTENERS='--listeners udp://[::]:2090 udp://0.0.0.0:2090'
 MULTI_THREAD_OPTION='--multi-thread'
 ENCRYPTION_OPTION=''
 IPV6_OPTION=''
 write_mesh_environment "$test_root/mesh.env"
+write_mesh_core_config "$test_root/easytier.toml"
 write_mesh_service "$test_root/easymesh.service"
 
 [[ "$(stat -c '%a' "$test_root/mesh.env")" == '600' ]]
-grep -Fq 'EASYMESH_NETWORK_SECRET="StrongSecret-123"' "$test_root/mesh.env"
+[[ "$(stat -c '%a' "$test_root/easytier.toml")" == '600' ]]
+grep -Fq 'EASYMESH_NETWORK_SECRET="BehifyRc2SecretMarker-123"' "$test_root/mesh.env"
+grep -Fqx 'network_secret = "${EASYMESH_NETWORK_SECRET}"' "$test_root/easytier.toml"
 grep -Fqx 'EnvironmentFile=/etc/behify-easymesh/mesh.env' "$test_root/easymesh.service"
-grep -Fq '${EASYMESH_NETWORK_SECRET}' "$test_root/easymesh.service"
-if grep -Fq 'StrongSecret-123' "$test_root/easymesh.service"; then
+grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$test_root/easymesh.service"
+grep -Fq -- '--console-log-level warn' "$test_root/easymesh.service"
+if grep -Fq 'BehifyRc2SecretMarker-123' "$test_root/easymesh.service" "$test_root/easytier.toml"; then
     printf 'Mesh secret leaked into the service unit.\n' >&2
     exit 1
 fi
+if grep -Fq -- '--network-secret' "$test_root/easymesh.service"; then
+    printf 'Mesh secret remains exposed through the service command line.\n' >&2
+    exit 1
+fi
+generated_secret=$(generate_random_secret)
+[[ "$generated_secret" =~ ^[0-9a-f]{32}$ ]]
 if grep -Eq '(^|[[:space:]])eval([[:space:]]|$)' "$repo_root/easymesh"; then
     printf 'Mesh manager contains eval.\n' >&2
     exit 1

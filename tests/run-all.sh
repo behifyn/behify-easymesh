@@ -10,6 +10,7 @@ bash "$repo_root/tests/static-smoke.sh"
 if [[ -f "$output_dir/SHA256SUMS" ]]; then
     bash "$repo_root/tests/release-package-regression.sh" "$output_dir"
     bash "$repo_root/tests/online-installer-failure.sh" "$output_dir/online-install-v${BEHIFY_EASYMESH_VERSION}.sh"
+    bash "$repo_root/tests/online-installer-failure.sh" "$output_dir/install.sh"
 else
     printf 'Release-output tests skipped because no built artifacts were supplied.\n'
 fi

@@ -119,9 +119,11 @@ remove_managed_application_files() {
     local path top_level
     local -a paths=(
         easymesh install.sh uninstall.sh versions.env manifest.txt files.sha256
-        README.md README_FA.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md
+        README.md README.fa.md README_FA.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md
         LICENSE NOTICE
+        docs/configuration.md docs/operations.md
         docs/release-checklist-v1.0.0-rc.1.md docs/release-notes-v1.0.0-rc.1.md
+        docs/release-checklist-v1.0.0-rc.2.md docs/release-notes-v1.0.0-rc.2.md
         docs/historical/smoke-test-v0.1.0.md docs/historical/smoke-test-v0.1.3-v2.6.4.md
         licenses/Easy-Mesh-ATTRIBUTION.md licenses/EasyTier-LGPL-3.0.txt licenses/Xray-core-MPL-2.0.txt
     )
@@ -187,10 +189,10 @@ if [[ "$PURGE" == "1" ]]; then
         rm -f -- "$WATCHDOG_FILE" "$MONITOR_SCRIPT" "$MONITOR_LOG"
         printf 'Removed Behify-owned watchdog files.\n'
     fi
-    if [[ -L "$MESH_CONFIG_DIR" || -L "$MESH_CONFIG_DIR/mesh.env" || -L "$MESH_CONFIG_DIR/backups" ]]; then
+    if [[ -L "$MESH_CONFIG_DIR" || -L "$MESH_CONFIG_DIR/mesh.env" || -L "$MESH_CONFIG_DIR/easytier.toml" || -L "$MESH_CONFIG_DIR/backups" ]]; then
         printf 'Preserved mesh configuration because a managed configuration path is a symlink.\n'
     elif [[ ! -f "$SERVICE_FILE" || "$MESH_SERVICE_OWNED" == "1" ]]; then
-        rm -f -- "$MESH_CONFIG_DIR/mesh.env"
+        rm -f -- "$MESH_CONFIG_DIR/mesh.env" "$MESH_CONFIG_DIR/easytier.toml"
         if [[ -d "$MESH_CONFIG_DIR/backups" ]]; then
             rm -rf -- "$MESH_CONFIG_DIR/backups"
         fi

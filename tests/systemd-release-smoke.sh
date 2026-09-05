@@ -9,6 +9,10 @@ runtime_dir=/root/easytier
 install_dir=/opt/behify-easymesh
 backup_dir=/opt/behify-easymesh-backups
 command_path=/usr/local/bin/easymesh
+mesh_config_dir=/etc/behify-easymesh
+mesh_env_file=$mesh_config_dir/mesh.env
+mesh_core_config=$mesh_config_dir/easytier.toml
+secret_marker=BehifyRc2NativeSecretMarker
 work_dir=""
 resources_created=0
 
@@ -25,7 +29,7 @@ cleanup() {
         rm -f -- "$service_file"
         systemctl daemon-reload >/dev/null 2>&1 || true
         [[ ! -L "$command_path" || "$(readlink "$command_path")" != '/opt/behify-easymesh/easymesh' ]] || rm -f -- "$command_path"
-        rm -rf -- "$runtime_dir" "$install_dir" "$backup_dir"
+        rm -rf -- "$runtime_dir" "$install_dir" "$backup_dir" "$mesh_config_dir"
     fi
     [[ -z "$work_dir" || ! -d "$work_dir" ]] || rm -rf -- "$work_dir"
 }
@@ -38,7 +42,7 @@ case "$(uname -m):$architecture" in
     *) die "Runner architecture $(uname -m) does not match $architecture." ;;
 esac
 systemctl show --property=Version >/dev/null 2>&1 || die "A running systemd instance is required."
-for path in "$service_file" "$runtime_dir" "$install_dir" "$backup_dir" "$command_path"; do
+for path in "$service_file" "$runtime_dir" "$install_dir" "$backup_dir" "$command_path" "$mesh_config_dir"; do
     [[ ! -e "$path" && ! -L "$path" ]] || die "Disposable runner path is not clean: $path"
 done
 
@@ -71,6 +75,20 @@ EOF
 
 write_service() {
     local extra_argument="${1:-}"
+
+    install -d -m 0700 "$mesh_config_dir"
+    cat > "$mesh_env_file" <<EOF
+EASYMESH_IP="10.254.254.1"
+EASYMESH_PEERS=""
+EASYMESH_HOSTNAME="behify-ci"
+EASYMESH_NETWORK_SECRET="$secret_marker"
+EASYMESH_DEFAULT_PROTOCOL="tcp"
+EASYMESH_LISTENERS="--listeners tcp://127.0.0.1:29999"
+EASYMESH_MULTI_THREAD=""
+EASYMESH_ENCRYPTION=""
+EASYMESH_IPV6="--disable-ipv6"
+EOF
+    chmod 0600 "$mesh_env_file"
     cat > "$service_file" <<EOF
 # Managed by Behify EasyMesh
 [Unit]
@@ -80,7 +98,8 @@ After=network.target
 [Service]
 Type=simple
 PrivateNetwork=yes
-ExecStart=/root/easytier/easytier-core -i 10.254.254.1 --hostname behify-ci --network-secret BehifyCiSecret123 --default-protocol tcp --listeners tcp://127.0.0.1:29999 --disable-ipv6 $extra_argument
+EnvironmentFile=/etc/behify-easymesh/mesh.env
+ExecStart=/root/easytier/easytier-core -i \${EASYMESH_IP} \$EASYMESH_PEERS --hostname \${EASYMESH_HOSTNAME} --network-secret \${EASYMESH_NETWORK_SECRET} --default-protocol \${EASYMESH_DEFAULT_PROTOCOL} \$EASYMESH_LISTENERS \$EASYMESH_MULTI_THREAD \$EASYMESH_ENCRYPTION \$EASYMESH_IPV6 $extra_argument
 Restart=no
 
 [Install]
@@ -92,6 +111,7 @@ EOF
 # Active and disabled must remain active and disabled after an unsupported-runtime upgrade.
 write_fake_runtime
 write_service
+mesh_env_hash=$(sha256sum "$mesh_env_file" | awk '{print $1}')
 systemctl start easymesh.service
 systemctl is-active --quiet easymesh.service
 ! systemctl is-enabled --quiet easymesh.service
@@ -99,6 +119,26 @@ EASYMESH_OFFLINE=1 bash "$package_dir/install.sh"
 systemctl is-active --quiet easymesh.service
 ! systemctl is-enabled --quiet easymesh.service
 "$runtime_dir/easytier-core" --version | grep -Fq '2.6.4'
+[[ "$(sha256sum "$mesh_env_file" | awk '{print $1}')" == "$mesh_env_hash" ]]
+[[ "$(stat -c '%a' "$mesh_env_file")" == '600' ]]
+[[ "$(stat -c '%a' "$mesh_core_config")" == '600' ]]
+grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$service_file"
+grep -Fq -- '--console-log-level warn' "$service_file"
+! grep -Fq -- '--network-secret' "$service_file"
+grep -Fqx 'network_secret = "${EASYMESH_NETWORK_SECRET}"' "$mesh_core_config"
+
+audit_dir="$work_dir/secret-audit"
+mkdir -p "$audit_dir"
+pid=$(systemctl show -p MainPID --value easymesh.service)
+[[ "$pid" =~ ^[1-9][0-9]*$ ]]
+tr '\0' ' ' < "/proc/$pid/cmdline" > "$audit_dir/process-argv.txt"
+systemctl cat easymesh.service > "$audit_dir/systemctl-cat.txt"
+systemctl status easymesh.service --no-pager > "$audit_dir/systemctl-status.txt"
+systemctl show easymesh.service --no-pager > "$audit_dir/systemctl-show.txt"
+journalctl -u easymesh.service --no-pager -o cat > "$audit_dir/journal.txt"
+if grep -R -Fq "$secret_marker" "$audit_dir" "$service_file" "$mesh_core_config"; then
+    die "Network secret marker leaked through service, argv, journal, or status output."
+fi
 
 # Inactive and enabled must remain inactive and enabled.
 systemctl stop easymesh.service

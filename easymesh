@@ -35,6 +35,9 @@ show_usage() {
         "Notes:" \
         "  EasyTier v2.6.4 is the only supported runtime." \
         "  Runtime installation and upgrades are handled by install.sh." \
+        "  Encryption is enabled by default; disabling it requires confirmation." \
+        "  Multi-thread mode is disabled by default." \
+        "  IPv6 keeps the existing enabled-by-default behavior." \
         "" \
         "Runtime checks:" \
         "  /root/easytier/easytier-core --version" \
@@ -216,14 +219,16 @@ verify_installed_runtime() {
 }
 
 generate_random_secret() {
-    openssl rand -hex 6
+    openssl rand -hex 16
 }
 
 #Var
 EASY_CLIENT='/root/easytier/easytier-cli'
+EASY_CORE='/root/easytier/easytier-core'
 SERVICE_FILE="/etc/systemd/system/easymesh.service"
 MESH_CONFIG_DIR="/etc/behify-easymesh"
 MESH_ENV_FILE="$MESH_CONFIG_DIR/mesh.env"
+MESH_CORE_CONFIG="$MESH_CONFIG_DIR/easytier.toml"
 MAIN_CORE_VERSION=""
 
 is_valid_ip_address() {
@@ -298,6 +303,18 @@ write_mesh_environment() {
     chmod 0600 "$destination"
 }
 
+write_mesh_core_config() {
+    local destination="$1"
+
+    umask 077
+    cat > "$destination" <<'EOF'
+[network_identity]
+network_name = "default"
+network_secret = "${EASYMESH_NETWORK_SECRET}"
+EOF
+    chmod 0600 "$destination"
+}
+
 write_mesh_service() {
     local destination="$1"
 
@@ -309,7 +326,7 @@ After=network.target
 
 [Service]
 EnvironmentFile=/etc/behify-easymesh/mesh.env
-ExecStart=/root/easytier/easytier-core -i ${EASYMESH_IP} $EASYMESH_PEERS --hostname ${EASYMESH_HOSTNAME} --network-secret ${EASYMESH_NETWORK_SECRET} --default-protocol ${EASYMESH_DEFAULT_PROTOCOL} $EASYMESH_LISTENERS $EASYMESH_MULTI_THREAD $EASYMESH_ENCRYPTION $EASYMESH_IPV6
+ExecStart=/root/easytier/easytier-core --config-file /etc/behify-easymesh/easytier.toml --console-log-level warn -i ${EASYMESH_IP} $EASYMESH_PEERS --hostname ${EASYMESH_HOSTNAME} --default-protocol ${EASYMESH_DEFAULT_PROTOCOL} $EASYMESH_LISTENERS $EASYMESH_MULTI_THREAD $EASYMESH_ENCRYPTION $EASYMESH_IPV6
 Restart=on-failure
 
 [Install]
@@ -319,29 +336,35 @@ EOF
 }
 
 validate_staged_mesh_service() {
-    local staged_service="$1"
+    local staged_service="$1" staged_config="${2:-}"
 
     if command -v systemd-analyze >/dev/null 2>&1; then
-        systemd-analyze verify "$staged_service" >/dev/null 2>&1
+        systemd-analyze verify "$staged_service" >/dev/null 2>&1 || return 1
     else
         grep -Fqx 'EnvironmentFile=/etc/behify-easymesh/mesh.env' "$staged_service" &&
-            grep -Fqx 'Restart=on-failure' "$staged_service"
+            grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$staged_service" &&
+            grep -Fq -- '--console-log-level warn' "$staged_service" &&
+            grep -Fqx 'Restart=on-failure' "$staged_service" || return 1
     fi
+    [[ -z "$staged_config" ]] ||
+        EASYMESH_NETWORK_SECRET="$NETWORK_SECRET" "$EASY_CORE" \
+            --config-file "$staged_config" --console-log-level warn --check-config >/dev/null 2>&1
 }
 
 mesh_configuration_paths_are_safe() {
     [[ ! -L "$MESH_CONFIG_DIR" && ! -L "$MESH_CONFIG_DIR/backups" &&
-       ! -L "$MESH_ENV_FILE" && ! -L "$SERVICE_FILE" ]] || return 1
+       ! -L "$MESH_ENV_FILE" && ! -L "$MESH_CORE_CONFIG" && ! -L "$SERVICE_FILE" ]] || return 1
     [[ ! -e "$MESH_CONFIG_DIR" || -d "$MESH_CONFIG_DIR" ]] || return 1
     [[ ! -e "$MESH_CONFIG_DIR/backups" || -d "$MESH_CONFIG_DIR/backups" ]] || return 1
     [[ ! -e "$MESH_ENV_FILE" || -f "$MESH_ENV_FILE" ]] || return 1
+    [[ ! -e "$MESH_CORE_CONFIG" || -f "$MESH_CORE_CONFIG" ]] || return 1
     [[ ! -e "$SERVICE_FILE" || -f "$SERVICE_FILE" ]] || return 1
     [[ ! -f "$SERVICE_FILE" ]] || is_behify_mesh_service_file
 }
 
 restore_mesh_configuration() {
-    local backup_dir="$1" service_existed="$2" env_existed="$3"
-    local was_active="$4" was_enabled="$5"
+    local backup_dir="$1" service_existed="$2" env_existed="$3" config_existed="$4"
+    local was_active="$5" was_enabled="$6"
 
     systemctl stop easymesh.service >/dev/null 2>&1 || true
     if [[ "$service_existed" == "1" ]]; then
@@ -353,6 +376,11 @@ restore_mesh_configuration() {
         install -m 0600 "$backup_dir/mesh.env" "$MESH_ENV_FILE" || return 1
     else
         rm -f "$MESH_ENV_FILE"
+    fi
+    if [[ "$config_existed" == "1" ]]; then
+        install -m 0600 "$backup_dir/easytier.toml" "$MESH_CORE_CONFIG" || return 1
+    else
+        rm -f "$MESH_CORE_CONFIG"
     fi
     systemctl daemon-reload >/dev/null 2>&1 || return 1
     if [[ "$was_enabled" == "1" ]]; then
@@ -366,9 +394,10 @@ restore_mesh_configuration() {
 }
 
 activate_mesh_configuration() {
-    local staged_env="$1" staged_service="$2"
-    local backup_dir service_existed=0 env_existed=0 was_active=0 was_enabled=0
+    local staged_env="$1" staged_config="$2" staged_service="$3"
+    local backup_dir service_existed=0 env_existed=0 config_existed=0 was_active=0 was_enabled=0
     local new_env="$MESH_CONFIG_DIR/.mesh.env.new.$$"
+    local new_config="$MESH_CONFIG_DIR/.easytier.toml.new.$$"
     local new_service="${SERVICE_FILE}.new.$$"
 
     mesh_configuration_paths_are_safe || {
@@ -385,6 +414,10 @@ activate_mesh_configuration() {
         env_existed=1
         cp -p "$MESH_ENV_FILE" "$backup_dir/mesh.env" || return 1
     fi
+    if [[ -f "$MESH_CORE_CONFIG" ]]; then
+        config_existed=1
+        cp -p "$MESH_CORE_CONFIG" "$backup_dir/easytier.toml" || return 1
+    fi
     systemctl is-active --quiet easymesh.service && was_active=1
     systemctl is-enabled --quiet easymesh.service && was_enabled=1
 
@@ -394,16 +427,19 @@ activate_mesh_configuration() {
     fi
 
     if ! install -m 0600 "$staged_env" "$new_env" ||
+       ! install -m 0600 "$staged_config" "$new_config" ||
        ! install -m 0644 "$staged_service" "$new_service" ||
        ! mv -f "$new_env" "$MESH_ENV_FILE" ||
+       ! mv -f "$new_config" "$MESH_CORE_CONFIG" ||
+       ! chmod 0600 "$MESH_ENV_FILE" "$MESH_CORE_CONFIG" ||
        ! mv -f "$new_service" "$SERVICE_FILE" ||
        ! systemctl daemon-reload >/dev/null 2>&1 ||
        ! systemctl enable easymesh.service >/dev/null 2>&1 ||
        ! systemctl start easymesh.service >/dev/null 2>&1 ||
        ! systemctl is-active --quiet easymesh.service; then
-        rm -f "$new_env" "$new_service"
+        rm -f "$new_env" "$new_config" "$new_service"
         colorize red "Mesh configuration failed. Restoring the previous configuration and service state." bold
-        if restore_mesh_configuration "$backup_dir" "$service_existed" "$env_existed" "$was_active" "$was_enabled"; then
+        if restore_mesh_configuration "$backup_dir" "$service_existed" "$env_existed" "$config_existed" "$was_active" "$was_enabled"; then
             colorize yellow "Previous mesh configuration restored." bold
         else
             colorize red "Rollback needs manual attention. Backup: $backup_dir" bold
@@ -415,10 +451,56 @@ activate_mesh_configuration() {
     colorize green "Configuration backup: $backup_dir" bold
 }
 
+prompt_network_secret() {
+    local generated_secret entered_secret
+
+    if [[ "${EASYMESH_SOURCE_ONLY:-0}" != "1" ]] && { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+        colorize red "Network secret setup requires an interactive terminal." bold
+        return 1
+    fi
+    generated_secret=$(generate_random_secret) || return 1
+    printf 'Generated Network Secret (sensitive — copy it now):\n%s\n\n' "$generated_secret"
+    read -r -s -p "Press Enter to use this generated secret, or enter a custom secret (hidden): " entered_secret || return 1
+    printf '\n'
+    NETWORK_SECRET=${entered_secret:-$generated_secret}
+}
+
+prompt_encryption_option() {
+    local choice confirm
+
+    colorize cyan "Encryption is enabled by default and recommended."
+    read -r -p "[-] Enable EasyTier tunnel encryption? [Y/n]: " choice || return 1
+    case "$choice" in
+        ""|[Yy]*) ENCRYPTION_OPTION="" ;;
+        [Nn]*)
+            colorize yellow "Without EasyTier encryption, tunnel traffic is unencrypted. Use this only on trusted paths or for payloads already protected end to end." bold
+            read -r -p "Disable EasyTier tunnel encryption? [y/N]: " confirm || return 1
+            if [[ "$confirm" =~ ^[Yy] ]]; then
+                ENCRYPTION_OPTION="--disable-encryption"
+            else
+                ENCRYPTION_OPTION=""
+            fi
+            ;;
+        *) colorize red "Enter yes or no." bold; return 1 ;;
+    esac
+}
+
+prompt_multi_thread_option() {
+    local choice
+
+    colorize cyan "Multi-thread can improve performance on some systems, but may increase instability or packet reordering on some paths."
+    read -r -p "[-] Enable multi-thread mode? [y/N]: " choice || return 1
+    case "$choice" in
+        [Yy]*) MULTI_THREAD_OPTION="--multi-thread" ;;
+        ""|[Nn]*) MULTI_THREAD_OPTION="" ;;
+        *) colorize red "Enter yes or no." bold; return 1 ;;
+    esac
+}
+
 connect_network_pool() {
-    local PEER_ADDRESSES IP_ADDRESS HOSTNAME PORT NETWORK_SECRET generated_secret
-    local PROTOCOL_CHOICE DEFAULT_PROTOCOL ENCRYPTION_CHOICE ENCRYPTION_OPTION
-    local MULTI_THREAD_CHOICE MULTI_THREAD_OPTION IPV6_CHOICE IPV6_OPTION
+    local PEER_ADDRESSES IP_ADDRESS HOSTNAME PORT NETWORK_SECRET
+    local PROTOCOL_CHOICE DEFAULT_PROTOCOL ENCRYPTION_OPTION
+    local MULTI_THREAD_OPTION IPV6_CHOICE IPV6_OPTION
     local PEER_ARGUMENTS LISTENERS staging_dir
 
     clear
@@ -458,11 +540,7 @@ UDP mode is generally more stable than TCP in this deployment."
         return 1
     }
 
-    generated_secret=$(generate_random_secret) || return 1
-    colorize cyan "A random secret was generated. Press Enter to use it." bold
-    read -r -s -p "[*] Enter Network Secret: " NETWORK_SECRET || return 1
-    printf '\n'
-    NETWORK_SECRET=${NETWORK_SECRET:-$generated_secret}
+    prompt_network_secret || return 1
     is_valid_network_secret "$NETWORK_SECRET" || {
         colorize red "Secret must be 12-128 safe characters and start with a letter or digit." bold
         press_key
@@ -485,16 +563,8 @@ UDP mode is generally more stable than TCP in this deployment."
         return 1
     }
 
-    read -r -p "[-] Enable encryption? (yes/no): " ENCRYPTION_CHOICE || return 1
-    case "$ENCRYPTION_CHOICE" in
-        [Nn]*) ENCRYPTION_OPTION="--disable-encryption" ;;
-        *) ENCRYPTION_OPTION="" ;;
-    esac
-    read -r -p "[-] Enable multi-thread? (yes/no): " MULTI_THREAD_CHOICE || return 1
-    case "$MULTI_THREAD_CHOICE" in
-        [Nn]*) MULTI_THREAD_OPTION="" ;;
-        *) MULTI_THREAD_OPTION="--multi-thread" ;;
-    esac
+    prompt_encryption_option || return 1
+    prompt_multi_thread_option || return 1
     read -r -p "[-] Enable IPv6? (yes/no): " IPV6_CHOICE || return 1
     case "$IPV6_CHOICE" in
         [Nn]*) IPV6_OPTION="--disable-ipv6" ;;
@@ -511,15 +581,16 @@ UDP mode is generally more stable than TCP in this deployment."
     chmod 0700 "$MESH_CONFIG_DIR" "$MESH_CONFIG_DIR/backups"
     staging_dir=$(mktemp -d "$MESH_CONFIG_DIR/.mesh-config.XXXXXX") || return 1
     if ! write_mesh_environment "$staging_dir/mesh.env" ||
+       ! write_mesh_core_config "$staging_dir/easytier.toml" ||
        ! write_mesh_service "$staging_dir/easymesh.service" ||
-       ! validate_staged_mesh_service "$staging_dir/easymesh.service"; then
+       ! validate_staged_mesh_service "$staging_dir/easymesh.service" "$staging_dir/easytier.toml"; then
         rm -rf "$staging_dir"
         colorize red "Generated mesh configuration did not pass validation. Nothing was activated." bold
         press_key
         return 1
     fi
 
-    activate_mesh_configuration "$staging_dir/mesh.env" "$staging_dir/easymesh.service"
+    activate_mesh_configuration "$staging_dir/mesh.env" "$staging_dir/easytier.toml" "$staging_dir/easymesh.service"
     local result=$?
     rm -rf "$staging_dir"
     press_key
@@ -670,6 +741,10 @@ remove_easymesh_service() {
 show_network_secret() {
     local network_secret
 
+	if [[ "${EASYMESH_SOURCE_ONLY:-0}" != "1" ]] && { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+		colorize red "Network secret display requires an interactive terminal." bold
+		return 1
+	fi
 	echo ''
     if [[ -r "$MESH_ENV_FILE" ]]; then
         network_secret=$(awk -F= '$1 == "EASYMESH_NETWORK_SECRET" { value=substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", value); print value }' "$MESH_ENV_FILE")
@@ -1138,8 +1213,7 @@ display_menu() {
     print_box_line "Behify EasyMesh"
     print_box_line "VPN Network Solution"
     printf "   +--------------------------------------+\n"
-    print_box_line "EasyTier: $EASYTIER_VERSION"
-    print_box_line "Installed: $(get_main_core_version)"
+    print_box_line "EasyTier: $(get_main_core_version)"
     print_box_line "Service: $(get_service_status)"
     print_box_line "Telegram: @behify1"
     print_box_line "Channel: BehifyVPN"

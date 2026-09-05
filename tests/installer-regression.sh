@@ -46,6 +46,38 @@ run_installer() {
         "$@" bash "$package_dir/install.sh"
 }
 
+write_legacy_mesh_configuration() {
+    local root="$1" extra_argument="${2:-}"
+
+    mkdir -p "$root/etc/behify-easymesh" "$root/etc/systemd/system"
+    cat > "$root/etc/behify-easymesh/mesh.env" <<'EOF'
+EASYMESH_IP="10.254.254.1"
+EASYMESH_PEERS=""
+EASYMESH_HOSTNAME="behify-test"
+EASYMESH_NETWORK_SECRET="BehifyRc2InstallerSecretMarker"
+EASYMESH_DEFAULT_PROTOCOL="tcp"
+EASYMESH_LISTENERS="--listeners tcp://127.0.0.1:29999"
+EASYMESH_MULTI_THREAD=""
+EASYMESH_ENCRYPTION=""
+EASYMESH_IPV6="--disable-ipv6"
+EOF
+    chmod 0600 "$root/etc/behify-easymesh/mesh.env"
+    cat > "$root/etc/systemd/system/easymesh.service" <<EOF
+# Managed by Behify EasyMesh
+[Unit]
+Description=Behify EasyMesh test service
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/behify-easymesh/mesh.env
+ExecStart=/root/easytier/easytier-core -i \${EASYMESH_IP} \$EASYMESH_PEERS --hostname \${EASYMESH_HOSTNAME} --network-secret \${EASYMESH_NETWORK_SECRET} --default-protocol \${EASYMESH_DEFAULT_PROTOCOL} \$EASYMESH_LISTENERS \$EASYMESH_MULTI_THREAD \$EASYMESH_ENCRYPTION \$EASYMESH_IPV6 $extra_argument
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
 unsupported_root="$test_root/unsupported"
 if MOCK_SYSTEMCTL_STATE="$unsupported_root/state" MOCK_INSTALL_ROOT="$unsupported_root" \
     BEHIFY_TEST_ROOT="$unsupported_root" BEHIFY_TEST_MODE=1 BEHIFY_TEST_ARCH=armv7l \
@@ -127,17 +159,26 @@ run_installer "$fresh_root" env
 [[ ! -s "$network_log" ]]
 
 upgrade_root="$test_root/upgrade"
-mkdir -p "$upgrade_root/root/easytier" "$upgrade_root/etc/systemd/system" "$upgrade_root/systemctl-state"
+mkdir -p "$upgrade_root/root/easytier" "$upgrade_root/systemctl-state"
 printf '#!/usr/bin/env bash\nprintf "easytier-core 9.9.9-test\\n"\n' > "$upgrade_root/root/easytier/easytier-core"
 printf '#!/usr/bin/env bash\nprintf "easytier-cli 9.9.9-test\\n"\n' > "$upgrade_root/root/easytier/easytier-cli"
 chmod 0755 "$upgrade_root/root/easytier/easytier-core" "$upgrade_root/root/easytier/easytier-cli"
-printf '%s\n' '# Managed by Behify EasyMesh' > "$upgrade_root/etc/systemd/system/easymesh.service"
+write_legacy_mesh_configuration "$upgrade_root"
+old_mesh_env_hash=$(sha256sum "$upgrade_root/etc/behify-easymesh/mesh.env" | awk '{print $1}')
 touch "$upgrade_root/systemctl-state/active" "$upgrade_root/systemctl-state/enabled"
 run_installer "$upgrade_root" env
 "$upgrade_root/root/easytier/easytier-core" --version | grep -Fq '2.6.4'
 [[ -f "$upgrade_root/systemctl-state/active" && -f "$upgrade_root/systemctl-state/enabled" ]]
 grep -Fq 'stop easymesh.service' "$upgrade_root/systemctl-state/calls.log"
 grep -Fq 'start easymesh.service' "$upgrade_root/systemctl-state/calls.log"
+[[ "$(sha256sum "$upgrade_root/etc/behify-easymesh/mesh.env" | awk '{print $1}')" == "$old_mesh_env_hash" ]]
+if [[ "$(uname -s)" == "Linux" ]]; then
+    [[ "$(stat -c '%a' "$upgrade_root/etc/behify-easymesh/easytier.toml")" == '600' ]]
+fi
+grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$upgrade_root/etc/systemd/system/easymesh.service"
+grep -Fq -- '--console-log-level warn' "$upgrade_root/etc/systemd/system/easymesh.service"
+! grep -Fq -- '--network-secret' "$upgrade_root/etc/systemd/system/easymesh.service"
+! grep -Fq 'BehifyRc2InstallerSecretMarker' "$upgrade_root/etc/systemd/system/easymesh.service" "$upgrade_root/etc/behify-easymesh/easytier.toml"
 if grep -Eq '^(enable|disable) easymesh\.service$' "$upgrade_root/systemctl-state/calls.log"; then
     printf 'Installer changed service enablement.\n' >&2
     exit 1
@@ -146,11 +187,11 @@ find "$upgrade_root/opt/behify-easymesh-backups" -type f -name easytier-core -pr
 
 make_rollback_root() {
     local root="$1"
-    mkdir -p "$root/root/easytier" "$root/etc/systemd/system" "$root/systemctl-state" "$root/opt/behify-easymesh"
+    mkdir -p "$root/root/easytier" "$root/systemctl-state" "$root/opt/behify-easymesh"
     printf '#!/usr/bin/env bash\nprintf "easytier-core 8.8.8-old\\n"\n' > "$root/root/easytier/easytier-core"
     printf '#!/usr/bin/env bash\nprintf "easytier-cli 8.8.8-old\\n"\n' > "$root/root/easytier/easytier-cli"
     chmod 0755 "$root/root/easytier/easytier-core" "$root/root/easytier/easytier-cli"
-    printf '%s\n' '# Managed by Behify EasyMesh' > "$root/etc/systemd/system/easymesh.service"
+    write_legacy_mesh_configuration "$root"
     printf 'preserve application\n' > "$root/opt/behify-easymesh/sentinel"
     touch "$root/systemctl-state/active" "$root/systemctl-state/enabled"
 }
@@ -169,6 +210,24 @@ fi
 [[ -f "$partial_root/opt/behify-easymesh/sentinel" ]]
 [[ -f "$partial_root/systemctl-state/active" && -f "$partial_root/systemctl-state/enabled" ]]
 grep -Fq 'Rollback completed' "$test_root/partial.log"
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+    migration_failure_root="$test_root/migration-failure"
+    make_rollback_root "$migration_failure_root"
+    chmod 0644 "$migration_failure_root/etc/behify-easymesh/mesh.env"
+    old_core_hash=$(sha256sum "$migration_failure_root/root/easytier/easytier-core" | awk '{print $1}')
+    old_service_hash=$(sha256sum "$migration_failure_root/etc/systemd/system/easymesh.service" | awk '{print $1}')
+    if run_installer "$migration_failure_root" env >"$test_root/migration-failure.log" 2>&1; then
+        printf 'Unsafe mesh environment permissions were accepted for migration.\n' >&2
+        exit 1
+    fi
+    grep -Fq 'Managed mesh.env must be mode 0600 before migration.' "$test_root/migration-failure.log"
+    grep -Fq 'Rollback completed' "$test_root/migration-failure.log"
+    [[ "$(sha256sum "$migration_failure_root/root/easytier/easytier-core" | awk '{print $1}')" == "$old_core_hash" ]]
+    [[ "$(sha256sum "$migration_failure_root/etc/systemd/system/easymesh.service" | awk '{print $1}')" == "$old_service_hash" ]]
+    [[ -f "$migration_failure_root/systemctl-state/active" && -f "$migration_failure_root/systemctl-state/enabled" ]]
+    [[ -f "$migration_failure_root/opt/behify-easymesh/sentinel" ]]
+fi
 
 symlink_root="$test_root/symlink-rollback"
 make_rollback_root "$symlink_root"
@@ -191,6 +250,8 @@ fi
 service_failure_root="$test_root/service-failure"
 make_rollback_root "$service_failure_root"
 old_core_hash=$(sha256sum "$service_failure_root/root/easytier/easytier-core" | awk '{print $1}')
+old_service_hash=$(sha256sum "$service_failure_root/etc/systemd/system/easymesh.service" | awk '{print $1}')
+old_mesh_env_hash=$(sha256sum "$service_failure_root/etc/behify-easymesh/mesh.env" | awk '{print $1}')
 touch "$service_failure_root/systemctl-state/fail-new-runtime"
 if run_installer "$service_failure_root" env >"$test_root/service-failure.log" 2>&1; then
     printf 'Forced service validation failure unexpectedly succeeded.\n' >&2
@@ -199,12 +260,16 @@ fi
 [[ "$(sha256sum "$service_failure_root/root/easytier/easytier-core" | awk '{print $1}')" == "$old_core_hash" ]]
 [[ -f "$service_failure_root/systemctl-state/active" && -f "$service_failure_root/systemctl-state/enabled" ]]
 [[ -f "$service_failure_root/opt/behify-easymesh/sentinel" ]]
+[[ "$(sha256sum "$service_failure_root/etc/systemd/system/easymesh.service" | awk '{print $1}')" == "$old_service_hash" ]]
+[[ "$(sha256sum "$service_failure_root/etc/behify-easymesh/mesh.env" | awk '{print $1}')" == "$old_mesh_env_hash" ]]
+[[ ! -e "$service_failure_root/etc/behify-easymesh/easytier.toml" ]]
 
 inactive_root="$test_root/inactive"
-mkdir -p "$inactive_root/etc/systemd/system" "$inactive_root/systemctl-state"
-printf '%s\n' '# Managed by Behify EasyMesh' > "$inactive_root/etc/systemd/system/easymesh.service"
+mkdir -p "$inactive_root/systemctl-state"
+write_legacy_mesh_configuration "$inactive_root"
 run_installer "$inactive_root" env
 [[ ! -f "$inactive_root/systemctl-state/active" && ! -f "$inactive_root/systemctl-state/enabled" ]]
+grep -Fq -- '--config-file /etc/behify-easymesh/easytier.toml' "$inactive_root/etc/systemd/system/easymesh.service"
 if grep -Eq '^(start|stop|enable|disable) easymesh\.service$' "$inactive_root/systemctl-state/calls.log"; then
     printf 'Installer changed an inactive/disabled service state.\n' >&2
     exit 1
