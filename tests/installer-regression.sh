@@ -148,10 +148,12 @@ else
 fi
 
 fresh_root="$test_root/fresh"
-run_installer "$fresh_root" env
+run_installer "$fresh_root" env > "$test_root/fresh-install.log"
 [[ -x "$fresh_root/opt/behify-easymesh/easymesh" ]]
 [[ -x "$fresh_root/root/easytier/easytier-core" ]]
 grep -Fqx '# Behify EasyMesh test command link' "$fresh_root/usr/local/bin/easymesh"
+grep -Fqx 'Run: sudo easymesh' "$test_root/fresh-install.log"
+! grep -Fq 'Menu options:' "$test_root/fresh-install.log"
 [[ ! -s "$network_log" ]]
 first_core_hash=$(sha256sum "$fresh_root/root/easytier/easytier-core" | awk '{print $1}')
 run_installer "$fresh_root" env

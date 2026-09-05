@@ -23,7 +23,7 @@ sudo test ! -e /root/easytier/reset.sh || sudo stat /root/easytier/reset.sh
 sudo crontab -l 2>/dev/null | grep -F '/root/easytier/reset.sh' || true
 ```
 
-The installer refuses an unattended upgrade while either legacy marker exists. For a recognized RC1 service, RC2 preserves `mesh.env` and its network options while migrating only the service's secret transport to the root-only EasyTier config. Candidate runtime and config validation happen before activation. Active/inactive and enabled/disabled states are preserved; failure restores the previous application, runtime pair, service file, private config, command path, and active state.
+The installer refuses an unattended upgrade while either legacy marker exists. For a recognized RC1 service, RC2 and later candidates preserve `mesh.env` and its network options while migrating only the service's secret transport to the root-only EasyTier config. Candidate runtime and config validation happen before activation. Active/inactive and enabled/disabled states are preserved; failure restores the previous application, runtime pair, service file, private config, command path, and active state.
 
 ## Diagnostics
 
@@ -36,7 +36,7 @@ systemctl status easymesh.service
 journalctl -u easymesh.service -n 100 --no-pager
 ```
 
-Do not paste service output into a public report without reviewing it. Managed RC2 services keep the mesh secret out of the unit, process arguments, normal status output, and WARN-level journal output.
+Do not paste service output into a public report without reviewing it. Managed RC2 and later services keep the mesh secret out of the unit, process arguments, normal status output, and new WARN-level journal output. The installer intentionally does not erase historical journal entries; when auditing an upgraded host, scope the journal query to the time after the new managed service started.
 
 For manual throughput testing, install `iperf3` separately. Retransmissions or packet reordering depend on the path and environment and are not by themselves proof of an EasyMesh defect.
 

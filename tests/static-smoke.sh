@@ -11,7 +11,7 @@ while IFS= read -r script; do
 done < <(find . -type f \( -name '*.sh' -o -name '*.sh.in' \) -print | LC_ALL=C sort)
 bash -n easymesh relay-manager
 
-grep -Fqx 'BEHIFY_EASYMESH_VERSION=1.0.0-rc.2' versions.env
+grep -Fqx 'BEHIFY_EASYMESH_VERSION=1.0.0-rc.3' versions.env
 grep -Fqx 'EASYTIER_VERSION=v2.6.4' versions.env
 grep -Fqx 'SERVICE_FILE="/etc/systemd/system/easymesh.service"' easymesh
 grep -Fqx 'RELAY_SERVICE_NAME="behify-relay.service"' relay-manager

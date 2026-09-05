@@ -2,7 +2,7 @@
 
 # Behify EasyMesh
 
-Behify EasyMesh ابزاری source-available برای مدیریت شبکه EasyTier و رله اختیاری و ایزوله Dokodemo-Door روی لینوکس است. نسخه آزمایشی `1.0.0-rc.2` از EasyTier `v2.6.4` استفاده می‌کند و معماری‌های `x86_64` و `aarch64` را پشتیبانی می‌کند.
+Behify EasyMesh ابزاری source-available برای مدیریت شبکه EasyTier و رله اختیاری و ایزوله Dokodemo-Door روی لینوکس است. نسخه آزمایشی `1.0.0-rc.3` از EasyTier `v2.6.4` استفاده می‌کند و معماری‌های `x86_64` و `aarch64` را پشتیبانی می‌کند.
 
 ## ارتباط با پروژه اصلی و مجوز
 
@@ -21,7 +21,7 @@ Behify EasyMesh ابزاری source-available برای مدیریت شبکه Eas
 
 ## نصب
 
-پس از انتشار نسخه پایدار، فرمان کوتاه نصب چنین خواهد بود:
+برای نسخه پایدار، نصب با یک فرمان انجام می‌شود:
 
 </div>
 
@@ -31,12 +31,34 @@ curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/i
 
 <div dir="rtl">
 
-این روش کوتاه، خود bootstrap را جداگانه بررسی نمی‌کند. روش پیشنهادی برای RC2، پس از انتشار آن، دریافت و بررسی فایل پیش از اجراست:
+این نشانی عمداً آخرین نسخه غیرآزمایشی GitHub را هدف می‌گیرد و پس از انتشار نسخه پایدار `v1.0.0` فعال می‌شود. نصب‌کننده در پایان `Run: sudo easymesh` را نشان می‌دهد و منو را خودکار باز نمی‌کند.
+
+برای نصب و سپس اجرای نسخه پایدار در یک فرمان:
 
 </div>
 
 ```bash
-version=v1.0.0-rc.2
+curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/install.sh -o /tmp/behify-install.sh && sudo bash /tmp/behify-install.sh && sudo easymesh
+```
+
+<div dir="rtl">
+
+پس از انتشار RC3، نصب مستقیم همان نسخه با این فرمان ممکن است:
+
+</div>
+
+```bash
+curl -fsSL https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.3/install.sh | sudo bash
+```
+
+<div dir="rtl">
+
+فرمان‌های pipe کوتاه‌اند، اما خود bootstrap را جداگانه بررسی نمی‌کنند. روش پیشنهادی RC3 دریافت و بررسی فایل پیش از اجراست:
+
+</div>
+
+```bash
+version=v1.0.0-rc.3
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/install.sh"
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/SHA256SUMS"
 grep ' install.sh$' SHA256SUMS | sha256sum -c -
@@ -45,16 +67,16 @@ sudo bash install.sh
 
 <div dir="rtl">
 
-فایل نسخه‌دار `online-install-v1.0.0-rc.2.sh` از نظر بایت با `install.sh` یکسان است. هر دو معماری را تشخیص می‌دهند، بسته ثابت همان معماری را می‌گیرند، SHA-256 و مسیرهای archive را بررسی می‌کنند و سپس نصب‌کننده آفلاین داخل بسته را اجرا می‌کنند.
+فایل نسخه‌دار `online-install-v1.0.0-rc.3.sh` از نظر بایت با `install.sh` یکسان است. هر دو معماری را تشخیص می‌دهند، بسته ثابت همان معماری را می‌گیرند، SHA-256 و مسیرهای archive را بررسی می‌کنند و سپس نصب‌کننده آفلاین داخل بسته را اجرا می‌کنند.
 
 برای نصب کاملا آفلاین، بسته مناسب و `SHA256SUMS` را به سرور منتقل کنید:
 
 </div>
 
 ```bash
-grep 'behify-easymesh-v1.0.0-rc.2-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
-tar -xzf behify-easymesh-v1.0.0-rc.2-linux-x86_64.tar.gz
-cd behify-easymesh-v1.0.0-rc.2-linux-x86_64
+grep 'behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz
+cd behify-easymesh-v1.0.0-rc.3-linux-x86_64
 sudo EASYMESH_OFFLINE=1 bash install.sh
 ```
 
@@ -73,7 +95,7 @@ easymesh --version
 
 <div dir="rtl">
 
-باز کردن منو هیچ دانلود یا جایگزینی EasyTier انجام نمی‌دهد. گزینه **Connect to the Mesh Network** تنظیمات mesh را ایجاد یا جایگزین می‌کند. تنظیمات پیش‌فرض عمومی شامل رمزنگاری فعال، multi-thread غیرفعال و IPv6 فعال مطابق رفتار قبلی است. secret تصادفی ۳۲ نویسه‌ای یک بار در ترمینال تعاملی نمایش داده می‌شود؛ Enter همان مقدار را می‌پذیرد و secret سفارشی بدون نمایش وارد می‌شود.
+باز کردن منو هیچ دانلود یا جایگزینی EasyTier انجام نمی‌دهد. گزینه **Connect to the Mesh Network** تنظیمات mesh را ایجاد یا جایگزین می‌کند. تنظیمات پیش‌فرض عمومی شامل رمزنگاری فعال، multi-thread غیرفعال و IPv6 فعال مطابق رفتار قبلی است. secret تصادفی ۳۲ نویسه‌ای یک بار و به‌شکل برجسته در ترمینال تعاملی نمایش داده می‌شود؛ Enter همان مقدار را می‌پذیرد، یا می‌توان secret سفارشی را به‌صورت قابل مشاهده تایپ و پیش از Enter اصلاح کرد. برنامه مقدار سفارشی را پس از ورود دوباره چاپ نمی‌کند.
 
 فایل‌های `/etc/behify-easymesh/mesh.env` و `/etc/behify-easymesh/easytier.toml` فقط برای root و با سطح دسترسی `0600` هستند. سرویس مدیریت‌شده secret را از config خصوصی می‌خواند، آن را وارد آرگومان process نمی‌کند و برای جلوگیری از ثبت effective config در سطح INFO، گزارش کنسول را روی WARN می‌گذارد. گزینه ۵ منو فقط با درخواست مستقیم کاربر secret ذخیره‌شده را نشان می‌دهد.
 
@@ -89,6 +111,6 @@ easymesh --version
 
 آسیب‌پذیری‌ها را طبق [SECURITY.md](SECURITY.md) به صورت خصوصی گزارش کنید. secret واقعی mesh یا اطلاعات ورود سرور را در گزارش عمومی قرار ندهید.
 
-این نسخه prerelease است. آزمون واقعی استقرار هنوز کامل نشده و نتایج throughput به تنهایی به معنی آماده بودن نسخه پایدار نیست.
+RC2 روی دو سرور واقعی برای نصب و ارتقا، restart، اتصال مستقیم P2P، ping دوطرفه و عدم نشت secret با موفقیت آزموده شد. RC3 همچنان prerelease است و پیش از انتشار پایدار `v1.0.0` باید smoke test دو سرور برای آن تکرار شود.
 
 </div>

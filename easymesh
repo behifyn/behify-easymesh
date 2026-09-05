@@ -459,9 +459,9 @@ prompt_network_secret() {
         return 1
     fi
     generated_secret=$(generate_random_secret) || return 1
-    printf 'Generated Network Secret (sensitive — copy it now):\n%s\n\n' "$generated_secret"
-    read -r -s -p "Press Enter to use this generated secret, or enter a custom secret (hidden): " entered_secret || return 1
-    printf '\n'
+    printf 'Generated Network Secret:\n'
+    colorize cyan "$generated_secret" bold
+    read -r -p "Press Enter to use it, or enter a custom secret: " entered_secret || return 1
     NETWORK_SECRET=${entered_secret:-$generated_secret}
 }
 
@@ -506,10 +506,7 @@ connect_network_pool() {
     clear
     colorize cyan "Connect to the Mesh Network" bold
     echo
-    colorize yellow "Leave peer addresses blank to enable reverse mode.
-Ws and wss modes are not recommended for Iran's network environment.
-Try disabling multi-thread mode if your mesh network is unstable.
-UDP mode is generally more stable than TCP in this deployment."
+    colorize yellow "Tip: leave Peer blank for reverse mode; UDP is recommended."
     echo
 
     for required_command in python3 openssl; do

@@ -10,7 +10,7 @@ Defaults:
 - Multi-thread: disabled. It can improve throughput on some systems but may increase instability or packet reordering on some paths.
 - IPv6: enabled, preserving the existing behavior.
 
-Behify generates a secret with `openssl rand -hex 16`. It displays that generated value once in the interactive terminal and keeps it visible during the hidden prompt. Press Enter to use it, or type a custom secret without echo. Menu option 5 is the only normal post-configuration reveal path.
+Behify generates a secret with `openssl rand -hex 16` and highlights the 32-character value once in the interactive terminal. Press Enter to use it, or type a custom secret visibly so it can be edited before Enter. A custom value is not printed again by the program. Because both generated and custom secrets are visible during setup, use a private terminal and avoid screen recording. Menu option 5 remains the explicit post-configuration reveal path.
 
 Sensitive settings are stored in `/etc/behify-easymesh/mesh.env`; EasyTier reads the secret through `/etc/behify-easymesh/easytier.toml`. Both files are root-only mode `0600`. The systemd unit and process arguments do not contain the secret.
 

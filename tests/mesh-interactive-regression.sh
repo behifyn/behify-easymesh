@@ -10,7 +10,7 @@ test_root=$(mktemp -d "${TMPDIR:-/tmp}/behify-mesh-interactive.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
 
 generated_marker=0123456789abcdef0123456789abcdef
-custom_marker=CustomSecret-Rc2-Marker
+custom_marker=CustomSecret-Rc3-Marker
 generate_random_secret() {
     printf '%s\n' "$generated_marker"
 }
@@ -19,12 +19,34 @@ NETWORK_SECRET=''
 prompt_network_secret <<< '' > "$test_root/generated.out" 2>&1
 [[ "$NETWORK_SECRET" == "$generated_marker" ]]
 [[ "$(grep -Foc "$generated_marker" "$test_root/generated.out")" == '1' ]]
-grep -Fqx 'Generated Network Secret (sensitive — copy it now):' "$test_root/generated.out"
+grep -Fqx 'Generated Network Secret:' "$test_root/generated.out"
+styled_secret=$(printf '\033[1m\033[36m%s\033[0m' "$generated_marker")
+grep -Fqx "$styled_secret" "$test_root/generated.out"
 
 NETWORK_SECRET=''
 prompt_network_secret <<< "$custom_marker" > "$test_root/custom.out" 2>&1
 [[ "$NETWORK_SECRET" == "$custom_marker" ]]
 ! grep -Fq "$custom_marker" "$test_root/custom.out"
+
+secret_prompt_source=$(sed -n '/^prompt_network_secret()/,/^}/p' "$repo_root/easymesh")
+[[ "$(grep -Ec '^[[:space:]]*read[[:space:]]' <<< "$secret_prompt_source")" == '1' ]]
+! grep -Eq 'read[[:space:]].*-[^[:space:]]*s([^[:alnum:]_]|$)' <<< "$secret_prompt_source"
+grep -Fq 'Press Enter to use it, or enter a custom secret: ' <<< "$secret_prompt_source"
+! grep -Fq 'Use this secret?' <<< "$secret_prompt_source"
+
+read_arguments=''
+read_value=''
+read() {
+    read_arguments="$*"
+    printf -v "${!#}" '%s' "$read_value"
+}
+read_value=$custom_marker
+NETWORK_SECRET=''
+prompt_network_secret > "$test_root/visible-custom.out" 2>&1
+[[ "$NETWORK_SECRET" == "$custom_marker" ]]
+[[ " $read_arguments " != *' -s '* ]]
+[[ "$read_arguments" == *'Press Enter to use it, or enter a custom secret: '* ]]
+unset -f read
 
 EASYMESH_SOURCE_ONLY=0
 NETWORK_SECRET='unchanged'
@@ -82,5 +104,9 @@ display_menu > "$test_root/menu.out"
 [[ "$(grep -Fc 'EasyTier:' "$test_root/menu.out")" == '1' ]]
 ! grep -Fq 'Installed:' "$test_root/menu.out"
 ! grep -Fq "$custom_marker" "$test_root/menu.out"
+
+connect_source=$(sed -n '/^connect_network_pool()/,/^}/p' "$repo_root/easymesh")
+grep -Fq 'Tip: leave Peer blank for reverse mode; UDP is recommended.' <<< "$connect_source"
+! grep -Fq "Ws and wss modes are not recommended" <<< "$connect_source"
 
 printf 'Mesh interactive regression checks passed.\n'

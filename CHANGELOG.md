@@ -2,6 +2,20 @@
 
 All notable changes to Behify EasyMesh are documented here.
 
+## [1.0.0-rc.3] - 2026-09-05
+
+### Changed
+
+- Reduced the Connect to Mesh introduction to one concise peer/UDP hint.
+- Styled the generated 32-character network secret for visibility and made custom secret entry visible and directly editable.
+- Removed the secret verification step and all second-confirmation behavior from network-secret entry.
+- Clarified one-command stable and versioned candidate installation while keeping the installer non-interactive after installation.
+
+### Security
+
+- Preserved RC2's root-only secret files, config-based secret transport, secret-free service arguments, and WARN-level managed-service logging.
+- Documented that visible interactive secret entry can be captured by terminal history or observers; the program does not repeat a custom value after entry.
+
 ## [1.0.0-rc.2] - 2026-09-05
 
 ### Changed
