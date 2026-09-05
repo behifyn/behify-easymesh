@@ -28,6 +28,15 @@ RELAY_KNOWN_NEUTRAL_DROPIN="$RELAY_SERVICE_DROPIN_DIR/10-neutral-binary.conf"
 execution_log="$test_root/executed-runtime-paths.log"
 export execution_log
 
+simulate_staged_copy_failure=0
+install() {
+    if [[ "$simulate_staged_copy_failure" == "1" && "${1:-}" == "-m" && \
+        "${2:-}" == "0755" && "${3:-}" == "$RELAY_LEGACY_XRAY_BINARY" ]]; then
+        return 1
+    fi
+    command install "$@"
+}
+
 install -d "$RELAY_LEGACY_XRAY_CURRENT" "$RELAY_CONFIG_DIR" \
     "$(dirname "$RELAY_SERVICE_FILE")" "$RELAY_SERVICE_DROPIN_DIR"
 cat > "$RELAY_LEGACY_XRAY_BINARY" <<'FAKE_XRAY'
@@ -117,7 +126,7 @@ fi
 [[ -f "$RELAY_SERVICE_DROPIN_DIR/99-admin.conf" ]]
 find "$RELAY_RELEASES_DIR" -type f -name behify-relayd -print -quit | grep -q .
 grep -Fq 'XRAY_CANDIDATE_BINARY="$temp_dir/unpacked/behify-relayd"' "$repo_root/relay-manager"
-grep -Fq '"$INSTALL_DIR/relay/relay-manager" --migrate-runtime' "$repo_root/install.sh"
+grep -Fq '"$WORK_DIR/application/relay/relay-manager" --migrate-runtime' "$repo_root/install.sh"
 if find "$RELAY_RELEASES_DIR" -type f -name xray -print -quit | grep -q .; then
     printf 'Update or migration staging retained an xray runtime basename.\n' >&2
     exit 1
@@ -313,14 +322,9 @@ RELAY_KNOWN_NEUTRAL_DROPIN="$RELAY_SERVICE_DROPIN_DIR/10-neutral-binary.conf"
 command install -d "$RELAY_LEGACY_XRAY_CURRENT"
 command cp "$validation_candidate" "$RELAY_LEGACY_XRAY_BINARY"
 command chmod 0755 "$RELAY_LEGACY_XRAY_BINARY"
-install() {
-    if [[ "${1:-}" == "-m" && "${2:-}" == "0755" && "${3:-}" == "$RELAY_LEGACY_XRAY_BINARY" ]]; then
-        return 1
-    fi
-    command install "$@"
-}
+simulate_staged_copy_failure=1
 expect_validation_failure 'Staged copy failed' migrate_legacy_relay_runtime
-unset -f install
+simulate_staged_copy_failure=0
 
 rollback_root="$test_root/rollback"
 RELAY_ROOT="$rollback_root/opt/behify-easymesh/relay"

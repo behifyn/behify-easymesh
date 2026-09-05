@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+BEHIFY_VERSION="@BEHIFY_VERSION@"
+RELEASE_BASE_URL="https://github.com/behifyn/behify-easymesh/releases/download/v${BEHIFY_VERSION}"
+X86_64_SHA256="@X86_64_PACKAGE_SHA256@"
+AARCH64_SHA256="@AARCH64_PACKAGE_SHA256@"
+TEMP_DIR=""
+
+die() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "Required command '$1' is missing. Install it with your operating system package manager and retry."
+}
+
+cleanup() {
+    [[ -z "$TEMP_DIR" || ! -d "$TEMP_DIR" ]] || rm -rf -- "$TEMP_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ $EUID -ne 0 && "${BEHIFY_TEST_MODE:-0}" != "1" ]]; then
+    die "Run this installer as root: sudo bash online-install-v${BEHIFY_VERSION}.sh"
+fi
+for command_name in curl sha256sum tar mktemp awk grep chmod rm uname; do
+    require_command "$command_name"
+done
+if [[ "${BEHIFY_TEST_MODE:-0}" != "1" && "$(uname -s)" != "Linux" ]]; then
+    die "Unsupported operating system '$(uname -s)'. Behify EasyMesh v1 supports Linux only."
+fi
+
+MACHINE=$(uname -m)
+if [[ "${BEHIFY_TEST_MODE:-0}" == "1" && -n "${BEHIFY_TEST_ARCH:-}" ]]; then
+    MACHINE="$BEHIFY_TEST_ARCH"
+fi
+case "$MACHINE" in
+    x86_64|amd64)
+        ARCHITECTURE=x86_64
+        EXPECTED_SHA256="$X86_64_SHA256"
+        ;;
+    aarch64|arm64)
+        ARCHITECTURE=aarch64
+        EXPECTED_SHA256="$AARCH64_SHA256"
+        ;;
+    *)
+        die "Unsupported architecture '$MACHINE'. Behify EasyMesh v1 supports only Linux x86_64 and aarch64."
+        ;;
+esac
+
+ASSET="behify-easymesh-v${BEHIFY_VERSION}-linux-${ARCHITECTURE}.tar.gz"
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/behify-easymesh-online.XXXXXX")
+chmod 0700 "$TEMP_DIR"
+ARCHIVE="$TEMP_DIR/$ASSET"
+
+printf 'Downloading %s...\n' "$ASSET"
+curl --fail --location --proto '=https' --tlsv1.2 \
+    --output "$ARCHIVE" "$RELEASE_BASE_URL/$ASSET" || die "Package download failed. The existing installation was not changed."
+printf '%s  %s\n' "$EXPECTED_SHA256" "$ARCHIVE" | sha256sum --check --status - ||
+    die "Package SHA-256 verification failed. The archive was not extracted."
+
+if ! tar -tzf "$ARCHIVE" > "$TEMP_DIR/archive.list"; then
+    die "Package archive is invalid."
+fi
+if awk '/(^|\/)\.\.($|\/)|^\// { exit 1 }' "$TEMP_DIR/archive.list"; then
+    :
+else
+    die "Package archive contains an unsafe path."
+fi
+tar --extract --gzip --file "$ARCHIVE" --directory "$TEMP_DIR" --no-same-owner
+PACKAGE_DIR="$TEMP_DIR/behify-easymesh-v${BEHIFY_VERSION}-linux-${ARCHITECTURE}"
+[[ -f "$PACKAGE_DIR/install.sh" && ! -L "$PACKAGE_DIR/install.sh" ]] || die "Package installer is missing."
+
+# The package installer revalidates every internal file and performs no network access.
+EASYMESH_OFFLINE=1 bash "$PACKAGE_DIR/install.sh"

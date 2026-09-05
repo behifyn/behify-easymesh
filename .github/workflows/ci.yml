@@ -1,0 +1,92 @@
+name: RC validation
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck unzip
+
+      - name: Bash syntax and regression tests
+        run: bash tests/static-smoke.sh
+
+      - name: ShellCheck at error severity
+        run: |
+          shellcheck --severity=error easymesh relay-manager install.sh uninstall.sh
+          shellcheck --severity=error release/build-release.sh release/online-install.sh.in
+          shellcheck --severity=error tests/*.sh
+
+      - name: Build verified RC packages
+        id: release
+        run: |
+          . ./versions.env
+          echo "version=$BEHIFY_EASYMESH_VERSION" >> "$GITHUB_OUTPUT"
+          bash release/build-release.sh
+
+      - name: Validate package contents and bootstrap failures
+        run: bash tests/run-all.sh release-output
+
+      - name: Retain exact tested RC bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-release-assets-${{ github.sha }}
+          path: |
+            release-output/behify-easymesh-v${{ steps.release.outputs.version }}-linux-x86_64.tar.gz
+            release-output/behify-easymesh-v${{ steps.release.outputs.version }}-linux-aarch64.tar.gz
+            release-output/online-install-v${{ steps.release.outputs.version }}.sh
+            release-output/install.sh
+            release-output/SHA256SUMS
+            release-output/easytier-v2.6.4-source.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    name: Native ${{ matrix.architecture }}
+    needs: validate-and-build
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact built RC bytes
+        uses: actions/download-artifact@v4
+        with:
+          name: rc-release-assets-${{ github.sha }}
+          path: release-output
+
+      - name: Verify release checksums
+        run: cd release-output && sha256sum --check SHA256SUMS
+
+      - name: Execute matching package and strict-offline install
+        run: bash tests/native-package-smoke.sh release-output ${{ matrix.architecture }}
+
+      - name: Disposable real-systemd install, upgrade, and rollback
+        run: |
+          . ./versions.env
+          sudo bash tests/systemd-release-smoke.sh \
+            "release-output/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-${{ matrix.architecture }}.tar.gz" \
+            "${{ matrix.architecture }}"
