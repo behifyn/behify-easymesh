@@ -2,7 +2,7 @@
 
 # Behify EasyMesh
 
-Behify EasyMesh ابزاری source-available برای مدیریت شبکه EasyTier و رله اختیاری و ایزوله Dokodemo-Door روی لینوکس است. نسخه آزمایشی `1.0.0-rc.3` از EasyTier `v2.6.4` استفاده می‌کند و معماری‌های `x86_64` و `aarch64` را پشتیبانی می‌کند.
+Behify EasyMesh ابزاری source-available برای مدیریت شبکه EasyTier و رله اختیاری و ایزوله Dokodemo-Door روی لینوکس است. نسخه `1.0.0` نسخه پایدار فعلی است، از EasyTier `v2.6.4` استفاده می‌کند و معماری‌های `x86_64` و `aarch64` را پشتیبانی می‌کند.
 
 ## ارتباط با پروژه اصلی و مجوز
 
@@ -31,7 +31,7 @@ curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/i
 
 <div dir="rtl">
 
-این نشانی عمداً آخرین نسخه غیرآزمایشی GitHub را هدف می‌گیرد و پس از انتشار نسخه پایدار `v1.0.0` فعال می‌شود. نصب‌کننده در پایان `Run: sudo easymesh` را نشان می‌دهد و منو را خودکار باز نمی‌کند.
+این نشانی آخرین نسخه پایدار GitHub را هدف می‌گیرد. نصب‌کننده در پایان `Run: sudo easymesh` را نشان می‌دهد و منو را خودکار باز نمی‌کند.
 
 برای نصب و سپس اجرای نسخه پایدار در یک فرمان:
 
@@ -43,22 +43,22 @@ curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/i
 
 <div dir="rtl">
 
-پس از انتشار RC3، نصب مستقیم همان نسخه با این فرمان ممکن است:
+نصب مستقیم نسخه دقیق v1.0.0 نیز با این فرمان ممکن است:
 
 </div>
 
 ```bash
-curl -fsSL https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.3/install.sh | sudo bash
+curl -fsSL https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0/install.sh | sudo bash
 ```
 
 <div dir="rtl">
 
-فرمان‌های pipe کوتاه‌اند، اما خود bootstrap را جداگانه بررسی نمی‌کنند. روش پیشنهادی RC3 دریافت و بررسی فایل پیش از اجراست:
+فرمان‌های pipe کوتاه‌اند، اما خود bootstrap را جداگانه بررسی نمی‌کنند. روش پیشنهادی نسخه پایدار، دریافت و بررسی فایل پیش از اجراست:
 
 </div>
 
 ```bash
-version=v1.0.0-rc.3
+version=v1.0.0
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/install.sh"
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/SHA256SUMS"
 grep ' install.sh$' SHA256SUMS | sha256sum -c -
@@ -67,16 +67,16 @@ sudo bash install.sh
 
 <div dir="rtl">
 
-فایل نسخه‌دار `online-install-v1.0.0-rc.3.sh` از نظر بایت با `install.sh` یکسان است. هر دو معماری را تشخیص می‌دهند، بسته ثابت همان معماری را می‌گیرند، SHA-256 و مسیرهای archive را بررسی می‌کنند و سپس نصب‌کننده آفلاین داخل بسته را اجرا می‌کنند.
+فایل نسخه‌دار `online-install-v1.0.0.sh` از نظر بایت با `install.sh` یکسان است. هر دو معماری را تشخیص می‌دهند، بسته ثابت همان معماری را می‌گیرند، SHA-256 و مسیرهای archive را بررسی می‌کنند و سپس نصب‌کننده آفلاین داخل بسته را اجرا می‌کنند.
 
 برای نصب کاملا آفلاین، بسته مناسب و `SHA256SUMS` را به سرور منتقل کنید:
 
 </div>
 
 ```bash
-grep 'behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
-tar -xzf behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz
-cd behify-easymesh-v1.0.0-rc.3-linux-x86_64
+grep 'behify-easymesh-v1.0.0-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf behify-easymesh-v1.0.0-linux-x86_64.tar.gz
+cd behify-easymesh-v1.0.0-linux-x86_64
 sudo EASYMESH_OFFLINE=1 bash install.sh
 ```
 
@@ -111,6 +111,6 @@ easymesh --version
 
 آسیب‌پذیری‌ها را طبق [SECURITY.md](SECURITY.md) به صورت خصوصی گزارش کنید. secret واقعی mesh یا اطلاعات ورود سرور را در گزارش عمومی قرار ندهید.
 
-RC2 روی دو سرور واقعی برای نصب و ارتقا، restart، اتصال مستقیم P2P، ping دوطرفه و عدم نشت secret با موفقیت آزموده شد. RC3 همچنان prerelease است و پیش از انتشار پایدار `v1.0.0` باید smoke test دو سرور برای آن تکرار شود.
+نسخه منتشرشده RC3 همه مرحله‌های CI شامل validate-and-build، اجرای native روی x86_64 و aarch64، بررسی package، نصب strict-offline و آزمون real-systemd را با موفقیت گذراند. این نسخه همچنین روی دو سرور واقعی x86_64 نصب شد؛ هر دو سرویس active و enabled بودند، مسیر DIRECT/P2P برقرار شد و ping دوطرفه با ۰٪ packet loss موفق بود. نسخه پایدار v1.0.0 همان runtime و رفتار آزموده‌شده را بدون تغییر در شبکه یا سرویس‌ها ارتقا می‌دهد.
 
 </div>

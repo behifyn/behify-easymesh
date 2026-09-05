@@ -2,6 +2,17 @@
 
 All notable changes to Behify EasyMesh are documented here.
 
+## [1.0.0] - 2026-09-05
+
+### Stable Promotion
+
+- Promoted the validated v1 release candidate to the first stable Behify EasyMesh release.
+- Retained EasyTier v2.6.4 and architecture-specific packages for Linux x86_64 and aarch64.
+- Retained transactional installation, strict-offline verification, service-state preservation, and rollback.
+- Retained root-only mesh secret storage, secret-free service arguments, and WARN-level managed-service logging.
+- Retained isolated Dokodemo-Door relay management and the tested EasyTier networking and routing behavior.
+- Recorded the successful RC3 CI gates and real two-server direct-P2P test with bidirectional ping and 0% packet loss.
+
 ## [1.0.0-rc.3] - 2026-09-05
 
 ### Changed

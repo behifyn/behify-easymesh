@@ -1,6 +1,6 @@
 # Behify EasyMesh
 
-Behify EasyMesh is a source-available Linux administration tool for an EasyTier mesh and an optional isolated Dokodemo-Door relay. Release candidate `1.0.0-rc.3` pins EasyTier `v2.6.4` and supports Linux `x86_64` and `aarch64`.
+Behify EasyMesh is a source-available Linux administration tool for an EasyTier mesh and an optional isolated Dokodemo-Door relay. Version `1.0.0` is the current stable release. It pins EasyTier `v2.6.4` and supports Linux `x86_64` and `aarch64`.
 
 Persian documentation: [README.fa.md](README.fa.md)
 
@@ -27,7 +27,7 @@ For the stable release, installation is one command:
 curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/install.sh | sudo bash
 ```
 
-This URL intentionally targets the latest non-prerelease GitHub release and will become active when stable v1.0.0 is published. The installer exits after printing `Run: sudo easymesh`; it does not open the TUI automatically.
+This URL targets the latest stable GitHub release. The installer exits after printing `Run: sudo easymesh`; it does not open the TUI automatically.
 
 To install and then launch the stable release in one command:
 
@@ -35,30 +35,30 @@ To install and then launch the stable release in one command:
 curl -fsSL https://github.com/behifyn/behify-easymesh/releases/latest/download/install.sh -o /tmp/behify-install.sh && sudo bash /tmp/behify-install.sh && sudo easymesh
 ```
 
-After RC3 is published, its exact tagged bootstrap can also be installed directly:
+The exact v1.0.0 bootstrap can also be installed directly:
 
 ```bash
-curl -fsSL https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0-rc.3/install.sh | sudo bash
+curl -fsSL https://github.com/behifyn/behify-easymesh/releases/download/v1.0.0/install.sh | sudo bash
 ```
 
-The pipe forms are convenient but do not independently verify the bootstrap. The recommended RC3 flow is download-first verification:
+The pipe forms are convenient but do not independently verify the bootstrap. The recommended stable flow is download-first verification:
 
 ```bash
-version=v1.0.0-rc.3
+version=v1.0.0
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/install.sh"
 curl -fLO "https://github.com/behifyn/behify-easymesh/releases/download/$version/SHA256SUMS"
 grep ' install.sh$' SHA256SUMS | sha256sum -c -
 sudo bash install.sh
 ```
 
-The versioned `online-install-v1.0.0-rc.3.sh` has identical bytes to `install.sh`. Both detect the host architecture, download the matching immutable package, verify its SHA-256, validate archive paths, and invoke the offline package installer.
+The versioned `online-install-v1.0.0.sh` has identical bytes to `install.sh`. Both detect the host architecture, download the matching immutable package, verify its SHA-256, validate archive paths, and invoke the offline package installer.
 
 For a strict offline install, transfer the matching package and `SHA256SUMS` to the target:
 
 ```bash
-grep 'behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
-tar -xzf behify-easymesh-v1.0.0-rc.3-linux-x86_64.tar.gz
-cd behify-easymesh-v1.0.0-rc.3-linux-x86_64
+grep 'behify-easymesh-v1.0.0-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf behify-easymesh-v1.0.0-linux-x86_64.tar.gz
+cd behify-easymesh-v1.0.0-linux-x86_64
 sudo EASYMESH_OFFLINE=1 bash install.sh
 ```
 
@@ -87,4 +87,4 @@ Peer and Peer-Center views use EasyTier's terminal formatting. Routes uses `watc
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Never include a live mesh secret or server credential in public reports.
 
-RC2 passed a real two-node deployment, upgrade, restart, direct-P2P, bidirectional-ping, and secret-exposure audit. RC3 remains a prerelease and must repeat the two-server smoke test before stable v1.0.0 is published.
+The published RC3 passed validate-and-build, native x86_64 and aarch64, package, strict-offline, and real-systemd CI gates. It also passed real installation on two x86_64 servers with both services active and enabled, DIRECT/P2P routing, and bidirectional ping with 0% packet loss. Stable v1.0.0 promotes that tested runtime and behavior without networking or service changes.
