@@ -92,7 +92,7 @@ x86_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-li
 aarch64_hash=$(sha256sum "$output_dir/behify-easymesh-v${BEHIFY_EASYMESH_VERSION}-linux-aarch64.tar.gz" | awk '{print $1}')
 online_installer="$output_dir/online-install-v${BEHIFY_EASYMESH_VERSION}.sh"
 cmp -s "$online_installer" "$output_dir/install.sh"
-grep -Fq '  install.sh' "$output_dir/SHA256SUMS"
+grep -Eq ' [* ]install\.sh$' "$output_dir/SHA256SUMS"
 grep -Fq "BEHIFY_VERSION=\"$BEHIFY_EASYMESH_VERSION\"" "$online_installer"
 grep -Fq "X86_64_SHA256=\"$x86_hash\"" "$online_installer"
 grep -Fq "AARCH64_SHA256=\"$aarch64_hash\"" "$online_installer"
