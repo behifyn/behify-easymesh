@@ -88,3 +88,12 @@ Peer and Peer-Center views use EasyTier's terminal formatting. Routes uses `watc
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Never include a live mesh secret or server credential in public reports.
 
 The published RC3 passed validate-and-build, native x86_64 and aarch64, package, strict-offline, and real-systemd CI gates. It also passed real installation on two x86_64 servers with both services active and enabled, DIRECT/P2P routing, and bidirectional ping with 0% packet loss. Stable v1.0.0 promotes that tested runtime and behavior without networking or service changes.
+
+
+## Support the Project
+
+If Behify EasyMesh has been useful to you, you can support its continued development and maintenance:
+
+- **USDT — TRON (TRC20):** `TP8wTGzJj6juM9RWnbnHczsd2aDbkV7AKE`
+
+Please send only USDT over the TRON (TRC20) network. Using a different asset or network may result in permanent loss.
